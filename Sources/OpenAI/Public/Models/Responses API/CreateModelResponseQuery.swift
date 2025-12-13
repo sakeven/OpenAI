@@ -9,7 +9,6 @@ import Foundation
 
 public struct CreateModelResponseQuery: Codable, Equatable, Sendable {
     public typealias Schemas = Components.Schemas
-    public typealias ResponseProperties = Schemas.ResponseProperties
     
     /// Text, image, or file inputs to the model, used to generate a response.
     ///
@@ -33,8 +32,8 @@ public struct CreateModelResponseQuery: Codable, Equatable, Sendable {
     /// - `computer_call_output.output.image_url`: Include image urls from the computer call output.
     /// - `reasoning.encrypted_content`: Includes an encrypted version of reasoning tokens in reasoning item outputs. This enables reasoning items to be used in multi-turn conversations when using the Responses API statelessly (like when the `store` parameter is set to `false`, or when an organization is enrolled in the zero data retention program).
     /// - `code_interpreter_call.outputs`: Includes the outputs of python code execution in code interpreter tool call items.
-    public let include: [Schemas.Includable]?
-    
+    public let include: [Schemas.IncludeEnum]?
+
     /// Whether to run the model response in the background. [Learn more](https://platform.openai.com/docs/guides/background).
     public let background: Bool?
     
@@ -53,7 +52,7 @@ public struct CreateModelResponseQuery: Codable, Equatable, Sendable {
     /// Keys are strings with a maximum length of 64 characters.
     /// Values are strings with a maximum length of 512 characters.
     public let metadata: Schemas.Metadata?
-    
+
     /// Whether to allow the model to run tool calls in parallel.
     public let parallelToolCalls: Bool?
     
@@ -101,8 +100,8 @@ public struct CreateModelResponseQuery: Codable, Equatable, Sendable {
     
     /// How the model should select which tool (or tools) to use when generating a response.
     /// See the `tools` parameter to see how to specify which tools the model can call.
-    public let toolChoice: ResponseProperties.ToolChoicePayload?
-    
+    public let toolChoice: Schemas.ToolChoiceParam?
+
     /// An array of tools the model may call while generating a response. You can specify which tool to use by setting the `toolChoice` parameter.
     ///
     /// The two categories of tools you can provide the model are:
@@ -129,7 +128,7 @@ public struct CreateModelResponseQuery: Codable, Equatable, Sendable {
     public init(
         input: Input,
         model: String,
-        include: [Schemas.Includable]? = nil,
+        include: [Schemas.IncludeEnum]? = nil,
         background: Bool? = nil,
         instructions: String? = nil,
         maxOutputTokens: Int? = nil,
@@ -143,7 +142,7 @@ public struct CreateModelResponseQuery: Codable, Equatable, Sendable {
         stream: Bool? = nil,
         temperature: Double? = nil,
         text: TextResponseConfigurationOptions? = nil,
-        toolChoice: ResponseProperties.ToolChoicePayload? = nil,
+        toolChoice: Schemas.ToolChoiceParam? = nil,
         tools: [Tool]? = nil,
         topP: Double? = nil,
         truncation: String? = nil,

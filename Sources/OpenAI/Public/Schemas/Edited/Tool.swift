@@ -23,7 +23,7 @@
     case computerTool(Schemas.ComputerUsePreviewTool)
     /// This tool searches the web for relevant results to use in a response.
     /// Learn more about the [web search tool](/docs/guides/tools-web-search).
-    case webSearchTool(Schemas.WebSearchPreviewTool)
+    case webSearchTool(Schemas.WebSearchTool)
     /// Give the model access to additional tools via remote Model Context Protocol (MCP) servers.
     /// [Learn more about MCP](https://platform.openai.com/docs/guides/tools-remote-mcp)
     case mcpTool(Schemas.MCPTool)
@@ -32,8 +32,14 @@
     /// A tool that generates images using a model like `gpt-image-1`.
     case imageGenerationTool(Schemas.ImageGenTool)
     /// A tool that allows the model to execute shell commands in a local environment.
-    case localShellTool(Schemas.LocalShellTool)
-    
+    case localShellTool(Schemas.LocalShellToolParam)
+    // A tool that allows the model to execute shell commands.
+    case functionShellTool(Schemas.FunctionShellToolParam)
+    // A custom tool that processes input using a specified format. Learn more about   [custom tools](https://platform.openai.com/docs/guides/function-calling#custom-tools)
+    case customTool(Schemas.CustomToolParam)
+    // Allows the assistant to create, delete, or update files using unified diffs.
+    case applyPatchTool(Schemas.ApplyPatchToolParam)
+
     public init(from decoder: any Decoder) throws {
         var errors: [any Error] = []
         do {
@@ -84,6 +90,24 @@
         } catch {
             errors.append(error)
         }
+        do {
+            self = .functionShellTool(try .init(from: decoder))
+            return
+        } catch {
+            errors.append(error)
+        }
+        do {
+            self = .customTool(try .init(from: decoder))
+            return
+        } catch {
+            errors.append(error)
+        }
+        do {
+            self = .applyPatchTool(try .init(from: decoder))
+            return
+        } catch {
+            errors.append(error)
+        }
         throw Swift.DecodingError.failedToDecodeOneOfSchema(
             type: Self.self,
             codingPath: decoder.codingPath,
@@ -107,6 +131,12 @@
         case let .imageGenerationTool(value):
             try value.encode(to: encoder)
         case let .localShellTool(value):
+            try value.encode(to: encoder)
+        case let .functionShellTool(value):
+            try value.encode(to: encoder)
+        case let .customTool(value):
+            try value.encode(to: encoder)
+        case let .applyPatchTool(value):
             try value.encode(to: encoder)
         }
     }
