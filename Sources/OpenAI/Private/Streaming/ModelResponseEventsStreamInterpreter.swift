@@ -73,7 +73,7 @@ final class ModelResponseEventsStreamInterpreter: @unchecked Sendable, StreamInt
             let responseStreamEvent = try responseStreamEvent(modelResponseEventType: modelResponseEventType, data: finalEvent.data)
             onEventDispatched?(responseStreamEvent)
         } catch {
-            print("modelResponseEventType \(modelResponseEventType) \(error.localizedDescription)")
+            print("modelResponseEventType \(modelResponseEventType) data: \(String(data: finalEvent.data, encoding: .utf8) ?? "") \(error.localizedDescription) ")
             throw error
         }
     }
