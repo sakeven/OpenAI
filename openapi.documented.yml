@@ -37995,6 +37995,7 @@ components:
             - type: string
               enum:
                 - dall-e-2
+                - gpt-image-1.5
                 - gpt-image-1
                 - gpt-image-1-mini
               x-stainless-const: true
@@ -38116,6 +38117,7 @@ components:
               enum:
                 - dall-e-2
                 - dall-e-3
+                - gpt-image-1.5
                 - gpt-image-1
                 - gpt-image-1-mini
               x-stainless-nominal: false
@@ -44036,6 +44038,7 @@ components:
         model:
           type: string
           enum:
+            - gpt-image-1.5
             - gpt-image-1
             - gpt-image-1-mini
           description: |

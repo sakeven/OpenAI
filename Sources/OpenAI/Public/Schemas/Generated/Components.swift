@@ -2664,6 +2664,7 @@ public enum Components {
             ///
             /// - Remark: Generated from `#/components/schemas/ImageGenTool/model`.
             @frozen public enum ModelPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case gptImage1_5 = "gpt-image-1.5"
                 case gptImage1 = "gpt-image-1"
                 case gptImage1Mini = "gpt-image-1-mini"
             }
