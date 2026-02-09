@@ -2932,48 +2932,23 @@ public enum Components {
             ///
             /// - Remark: Generated from `#/components/schemas/ImageGenToolCall/status`.
             public var status: Components.Schemas.ImageGenToolCall.StatusPayload
+            /// The generated image encoded in base64.
+            ///
+            ///
             /// - Remark: Generated from `#/components/schemas/ImageGenToolCall/result`.
-            @frozen public enum ResultPayload: Codable, Hashable, Sendable {
-                /// The generated image encoded in base64.
-                ///
-                ///
-                /// - Remark: Generated from `#/components/schemas/ImageGenToolCall/result/case1`.
-                case case1(Swift.String)
-                public init(from decoder: any Decoder) throws {
-                    var errors: [any Error] = []
-                    do {
-                        self = .case1(try decoder.decodeFromSingleValueContainer())
-                        return
-                    } catch {
-                        errors.append(error)
-                    }
-                    throw Swift.DecodingError.failedToDecodeOneOfSchema(
-                        type: Self.self,
-                        codingPath: decoder.codingPath,
-                        errors: errors
-                    )
-                }
-                public func encode(to encoder: any Encoder) throws {
-                    switch self {
-                        case let .case1(value):
-                            try encoder.encodeToSingleValueContainer(value)
-                    }
-                }
-            }
-            /// - Remark: Generated from `#/components/schemas/ImageGenToolCall/result`.
-            public var result: Components.Schemas.ImageGenToolCall.ResultPayload
+            public var result: Swift.String
             /// Creates a new `ImageGenToolCall`.
             ///
             /// - Parameters:
             ///   - _type: The type of the image generation call. Always `image_generation_call`.
             ///   - id: The unique ID of the image generation call.
             ///   - status: The status of the image generation call.
-            ///   - result:
+            ///   - result: The generated image encoded in base64.
             public init(
                 _type: Components.Schemas.ImageGenToolCall._TypePayload,
                 id: Swift.String,
                 status: Components.Schemas.ImageGenToolCall.StatusPayload,
-                result: Components.Schemas.ImageGenToolCall.ResultPayload
+                result: Swift.String
             ) {
                 self._type = _type
                 self.id = id

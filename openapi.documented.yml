@@ -44154,10 +44154,9 @@ components:
           description: |
             The status of the image generation call.
         result:
-          oneOf:
-            - type: string
-              description: |
-                The generated image encoded in base64.
+          type: string
+          description: |
+            The generated image encoded in base64.
 
       required:
         - type
