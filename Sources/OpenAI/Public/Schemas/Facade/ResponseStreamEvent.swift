@@ -209,6 +209,7 @@ public enum ResponseStreamEvent: Codable, Equatable, Sendable {
     case reasoning(ReasoningEvent)
     case reasoningSummary(ReasoningSummaryEvent)
     case customToolCall(CustomToolCallEvent)
+    case keepalive
 
     enum ResponseStreamEventDecodingError: Error {
         case unknownEventType(String)

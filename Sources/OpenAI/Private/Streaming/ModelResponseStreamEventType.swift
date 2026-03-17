@@ -83,4 +83,6 @@ enum ModelResponseStreamEventType: String {
     case responseCodeInterpreterCallInProgress = "response.code_interpreter_call.in_progress"
     case responseCodeInterpreterCallInterpreting = "response.code_interpreter_call.interpreting"
     case responseCodeInterpreterCallCompleted = "response.code_interpreter_call.completed"
+
+    case keepalive = "keepalive"
 }

@@ -73,7 +73,7 @@ final class ModelResponseEventsStreamInterpreter: @unchecked Sendable, StreamInt
             let responseStreamEvent = try responseStreamEvent(modelResponseEventType: modelResponseEventType, data: finalEvent.data)
             onEventDispatched?(responseStreamEvent)
         } catch {
-            print("modelResponseEventType \(modelResponseEventType) data: \(String(data: finalEvent.data, encoding: .utf8) ?? "") \(error.localizedDescription) ")
+            print("modelResponseEventType \(modelResponseEventType) data: \(String(data: finalEvent.data, encoding: .utf8) ?? "") \(error) ")
             throw error
         }
     }
@@ -207,6 +207,8 @@ final class ModelResponseEventsStreamInterpreter: @unchecked Sendable, StreamInt
                 .codeInterpreterCall(.completed(try decode(data: data)))
         case .error:
                 .error(try decode(data: data))
+        case .keepalive:
+                .keepalive
         }
     }
     
