@@ -12448,7 +12448,7 @@ public enum Components {
                 case _type = "type"
             }
         }
-        /// Action type "find": Searches for a pattern within a loaded page.
+        /// Action type "find_in_page": Searches for a pattern within a loaded page.
         ///
         ///
         /// - Remark: Generated from `#/components/schemas/WebSearchActionFind`.
@@ -12458,7 +12458,7 @@ public enum Components {
             ///
             /// - Remark: Generated from `#/components/schemas/WebSearchActionFind/type`.
             @frozen public enum _TypePayload: String, Codable, Hashable, Sendable, CaseIterable {
-                case find = "find"
+                case find = "find_in_page"
             }
             /// The action type.
             ///
