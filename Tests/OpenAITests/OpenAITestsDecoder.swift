@@ -698,6 +698,75 @@ class OpenAITestsDecoder: XCTestCase {
         
         try decode(data, expectedValue)
     }
+
+    func testResponseObjectWithWebSearchOpenPageWithoutURLRoundTrips() throws {
+        let data = """
+        {
+          "created_at": 123,
+          "id": "resp_1",
+          "metadata": {},
+          "model": "gpt-5",
+          "object": "response",
+          "output": [
+            {
+              "id": "ws_1",
+              "type": "web_search_call",
+              "status": "completed",
+              "action": {
+                "type": "open_page"
+              }
+            }
+          ],
+          "parallel_tool_calls": false,
+          "status": "completed",
+          "text": {},
+          "tool_choice": "auto",
+          "tools": []
+        }
+        """
+
+        let expectedValue = ResponseObject(
+            createdAt: 123,
+            error: nil,
+            id: "resp_1",
+            incompleteDetails: nil,
+            instructions: nil,
+            maxOutputTokens: nil,
+            metadata: [:],
+            model: "gpt-5",
+            object: "response",
+            output: [
+                .WebSearchToolCall(.init(
+                    id: "ws_1",
+                    _type: .webSearchCall,
+                    status: .completed,
+                    action: .WebSearchActionOpenPage(.init(
+                        _type: .openPage,
+                        url: nil
+                    ))
+                ))
+            ],
+            parallelToolCalls: false,
+            previousResponseId: nil,
+            reasoning: nil,
+            status: "completed",
+            temperature: nil,
+            text: .init(format: nil),
+            toolChoice: .ToolChoiceOptions(.auto),
+            tools: [],
+            topP: nil,
+            truncation: nil,
+            usage: nil,
+            user: nil
+        )
+
+        let decoded = try JSONDecoder().decode(ResponseObject.self, from: Data(data.utf8))
+        XCTAssertEqual(decoded, expectedValue)
+
+        let reencoded = try JSONEncoder().encode(decoded)
+        let roundTripped = try JSONDecoder().decode(ResponseObject.self, from: reencoded)
+        XCTAssertEqual(roundTripped, expectedValue)
+    }
     
     func testMessageQuery() async throws {
         let messageQuery = MessageQuery(

@@ -12517,7 +12517,7 @@ public enum Components {
             ///
             ///
             /// - Remark: Generated from `#/components/schemas/WebSearchActionOpenPage/url`.
-            public var url: Swift.String
+            public var url: Swift.String?
             /// Creates a new `WebSearchActionOpenPage`.
             ///
             /// - Parameters:
@@ -12525,7 +12525,7 @@ public enum Components {
             ///   - url: The URL opened by the model.
             public init(
                 _type: Components.Schemas.WebSearchActionOpenPage._TypePayload,
-                url: Swift.String
+                url: Swift.String? = nil
             ) {
                 self._type = _type
                 self.url = url
