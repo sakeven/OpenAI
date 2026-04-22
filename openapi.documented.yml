@@ -37995,6 +37995,7 @@ components:
             - type: string
               enum:
                 - dall-e-2
+                - gpt-image-2
                 - gpt-image-1.5
                 - gpt-image-1
                 - gpt-image-1-mini
@@ -38002,8 +38003,8 @@ components:
           x-oaiTypeLabel: string
           nullable: true
           description: >-
-            The model to use for image generation. Only `dall-e-2` and `gpt-image-1` are supported. Defaults
-            to `dall-e-2` unless a parameter specific to `gpt-image-1` is used.
+            The model to use for image generation. Only `dall-e-2` and GPT image models are supported.
+            Defaults to `dall-e-2` unless a parameter specific to a GPT image model is used.
         'n':
           type: integer
           minimum: 1
@@ -38117,6 +38118,7 @@ components:
               enum:
                 - dall-e-2
                 - dall-e-3
+                - gpt-image-2
                 - gpt-image-1.5
                 - gpt-image-1
                 - gpt-image-1-mini
@@ -38124,8 +38126,8 @@ components:
           x-oaiTypeLabel: string
           nullable: true
           description: >-
-            The model to use for image generation. One of `dall-e-2`, `dall-e-3`, or `gpt-image-1`. Defaults
-            to `dall-e-2` unless a parameter specific to `gpt-image-1` is used.
+            The model to use for image generation. One of `dall-e-2`, `dall-e-3`, or a GPT image model.
+            Defaults to `dall-e-2` unless a parameter specific to a GPT image model is used.
         'n':
           type: integer
           minimum: 1
@@ -44038,6 +44040,7 @@ components:
         model:
           type: string
           enum:
+            - gpt-image-2
             - gpt-image-1.5
             - gpt-image-1
             - gpt-image-1-mini

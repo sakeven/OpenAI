@@ -27,8 +27,8 @@ public struct ImageEditView: View {
     @State private var isLoading: Bool = false
     @State private var errorMessage: String?
 
-    @State private var selectedModel: Model = .gpt_image_1
-    private let models: [Model] = [.gpt_image_1, .dall_e_2]
+    @State private var selectedModel: Model = .gpt_image_2
+    private let models: [Model] = [.gpt_image_2, .gpt_image_1, .dall_e_2]
 
     public init(store: ImageStore) {
         self.store = store
@@ -150,7 +150,7 @@ public struct ImageEditView: View {
         }
         .onChange(of: selectedModel) { _, newModel in
             switch newModel {
-            case .gpt_image_1:
+            case .gpt_image_1, .gpt_image_2:
                 selectedPhotoItems = []
                 selectedImages = []
                 maxPhotos = 2

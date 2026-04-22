@@ -75,6 +75,40 @@ class OpenAITestsDecoder: XCTestCase {
         )
         try decode(data, expectedValue)
     }
+
+    func testResponseStreamEventWithInProgressImageGenerationCall() throws {
+        let data = """
+        {
+          "type": "response.output_item.added",
+          "item": {
+            "id": "ig_04e7922f0fe120280169e4deb2fae8819198eba5d3a0aedeeb",
+            "type": "image_generation_call",
+            "status": "in_progress"
+          },
+          "output_index": 0,
+          "sequence_number": 2
+        }
+        """
+
+        let event = try JSONDecoder().decode(ResponseStreamEvent.self, from: Data(data.utf8))
+
+        switch event {
+        case .outputItem(.added(let addedEvent)):
+            XCTAssertEqual(addedEvent.type, "response.output_item.added")
+            XCTAssertEqual(addedEvent.outputIndex, 0)
+
+            switch addedEvent.item {
+            case .ImageGenToolCall(let imageOutput):
+                XCTAssertEqual(imageOutput.id, "ig_04e7922f0fe120280169e4deb2fae8819198eba5d3a0aedeeb")
+                XCTAssertEqual(imageOutput.status, .inProgress)
+                XCTAssertEqual(imageOutput.result, "")
+            default:
+                XCTFail("Expected an ImageGenToolCall output item")
+            }
+        default:
+            XCTFail("Expected a response.output_item.added event")
+        }
+    }
     
     func testImageQuery() async throws {
         let imageQuery = ImagesQuery(
@@ -100,6 +134,44 @@ class OpenAITestsDecoder: XCTestCase {
         """
         
         try encode(imageQuery, expectedValue)
+    }
+
+    func testImageQueryWithGPTImage2Model() throws {
+        let imageQuery = ImagesQuery(
+            prompt: "test",
+            model: .gpt_image_2,
+            responseFormat: .b64_json
+        )
+
+        let expectedValue = """
+        {
+            "model": "gpt-image-2",
+            "prompt": "test",
+            "response_format": "b64_json"
+        }
+        """
+
+        try encode(imageQuery, expectedValue)
+    }
+
+    func testImageGenerationToolWithGPTImage2Model() throws {
+        let tool = Tool.imageGenerationTool(
+            .init(
+                _type: .imageGeneration,
+                model: .gptImage2,
+                partialImages: 2
+            )
+        )
+
+        let expectedValue = """
+        {
+            "type": "image_generation",
+            "model": "gpt-image-2",
+            "partial_images": 2
+        }
+        """
+
+        try encode(tool, expectedValue)
     }
 
     func testChatQueryWithVision() async throws {
