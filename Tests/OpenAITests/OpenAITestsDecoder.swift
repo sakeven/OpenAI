@@ -109,6 +109,29 @@ class OpenAITestsDecoder: XCTestCase {
             XCTFail("Expected a response.output_item.added event")
         }
     }
+
+    /// Verifies Responses image generation calls retain the revised prompt returned by the API.
+    func testImageGenerationCallDecodesRevisedPrompt() throws {
+        let data = """
+        {
+          "id": "ig_123",
+          "type": "image_generation_call",
+          "status": "completed",
+          "revised_prompt": "A small blue square",
+          "result": "Zm9v"
+        }
+        """
+
+        let item = try JSONDecoder().decode(
+            Components.Schemas.ImageGenToolCall.self,
+            from: Data(data.utf8)
+        )
+
+        XCTAssertEqual(item.id, "ig_123")
+        XCTAssertEqual(item.status, .completed)
+        XCTAssertEqual(item.revisedPrompt, "A small blue square")
+        XCTAssertEqual(item.result, "Zm9v")
+    }
     
     func testImageQuery() async throws {
         let imageQuery = ImagesQuery(

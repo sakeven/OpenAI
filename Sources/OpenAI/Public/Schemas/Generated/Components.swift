@@ -2934,6 +2934,11 @@ public enum Components {
             ///
             /// - Remark: Generated from `#/components/schemas/ImageGenToolCall/status`.
             public var status: Components.Schemas.ImageGenToolCall.StatusPayload
+            /// The prompt the model used after applying safety and quality revisions.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/ImageGenToolCall/revised_prompt`.
+            public var revisedPrompt: Swift.String?
             /// The generated image encoded in base64.
             ///
             ///
@@ -2945,22 +2950,26 @@ public enum Components {
             ///   - _type: The type of the image generation call. Always `image_generation_call`.
             ///   - id: The unique ID of the image generation call.
             ///   - status: The status of the image generation call.
+            ///   - revisedPrompt: The prompt the model used after applying safety and quality revisions.
             ///   - result: The generated image encoded in base64.
             public init(
                 _type: Components.Schemas.ImageGenToolCall._TypePayload,
                 id: Swift.String,
                 status: Components.Schemas.ImageGenToolCall.StatusPayload,
+                revisedPrompt: Swift.String? = nil,
                 result: Swift.String
             ) {
                 self._type = _type
                 self.id = id
                 self.status = status
+                self.revisedPrompt = revisedPrompt
                 self.result = result
             }
             public enum CodingKeys: String, CodingKey {
                 case _type = "type"
                 case id
                 case status
+                case revisedPrompt = "revised_prompt"
                 case result
             }
         }

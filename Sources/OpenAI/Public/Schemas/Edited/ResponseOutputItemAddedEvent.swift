@@ -68,6 +68,7 @@ public struct ResponseOutputItemAddedEvent: Codable, Hashable, Sendable {
                 _type: placeholder.type,
                 id: placeholder.id,
                 status: placeholder.status,
+                revisedPrompt: placeholder.revisedPrompt,
                 result: placeholder.result ?? ""
             )
         )
@@ -82,6 +83,16 @@ private struct StreamingImageGenerationPlaceholder: Decodable {
     let id: String
     /// Current image-generation status reported by the Responses stream.
     let status: Components.Schemas.ImageGenToolCall.StatusPayload
+    /// Revised prompt when the stream includes the final prompt text before `result`.
+    let revisedPrompt: String?
     /// Final base64 image payload when already available.
     let result: String?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case id
+        case status
+        case revisedPrompt = "revised_prompt"
+        case result
+    }
 }
