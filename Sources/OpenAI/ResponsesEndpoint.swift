@@ -39,6 +39,14 @@ public final class ResponsesEndpoint: ResponsesEndpointProtocol, Sendable {
             completion: completion
         )
     }
+
+    /// Runs a compaction pass over a Responses conversation window.
+    public func compactResponse(query: CompactModelResponseQuery, completion: @Sendable @escaping (Result<CompactedResponseObject, any Error>) -> Void) -> any CancellableRequest {
+        client.performRequest(
+            request: makeCompactResponseRequest(query: query),
+            completion: completion
+        )
+    }
     
     public func createResponseStreaming(
         query: CreateModelResponseQuery,
@@ -62,6 +70,11 @@ public final class ResponsesEndpoint: ResponsesEndpointProtocol, Sendable {
     
     func makeCreateResponseRequest(query: CreateModelResponseQuery) -> JSONRequest<ResponseObject> {
         .init(body: query, url: buildURL(path: .Responses.createModelResponse.stringValue))
+    }
+
+    /// Builds the JSON request for the standalone Responses compaction endpoint.
+    func makeCompactResponseRequest(query: CompactModelResponseQuery) -> JSONRequest<CompactedResponseObject> {
+        .init(body: query, url: buildURL(path: .Responses.compactModelResponse.stringValue))
     }
     
     private func buildURL(path: String, after: String? = nil) -> URL {

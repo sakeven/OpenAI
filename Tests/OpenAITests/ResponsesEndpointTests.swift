@@ -67,6 +67,53 @@ class ResponsesEndpointTests: XCTestCase {
         XCTAssertEqual(dummy, result)
     }
 
+    func testCreateResponseQueryEncodesContextManagement() throws {
+        let query = CreateModelResponseQuery(
+            input: .textInput("Hello"),
+            model: "test-model",
+            contextManagement: [
+                .init(compactThreshold: 200_000)
+            ]
+        )
+
+        let data = try JSONEncoder().encode(query)
+        let dictionary = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let contextManagement = try XCTUnwrap(dictionary["context_management"] as? [[String: Any]])
+        XCTAssertEqual(contextManagement.count, 1)
+        XCTAssertEqual(contextManagement[0]["type"] as? String, "compaction")
+        XCTAssertEqual(contextManagement[0]["compact_threshold"] as? Int, 200_000)
+    }
+
+    func testCompactResponse() async throws {
+        let json = """
+        {"id":"resp_001","object":"response.compaction","created_at":1764967971,"output":[{"id":"msg_000","type":"message","status":"completed","content":[{"type":"input_text","text":"Hello"}],"role":"user"},{"id":"cmp_001","type":"compaction","encrypted_content":"encrypted"}],"usage":{"input_tokens":139,"input_tokens_details":{"cached_tokens":0},"output_tokens":438,"output_tokens_details":{"reasoning_tokens":64},"total_tokens":577}}
+        """
+        urlSession.dataTask = DataTaskMock.successful(with: json.data(using: .utf8)!)
+
+        let result = try await openAI.responses.compactResponse(
+            query: .init(
+                model: "gpt-5.5",
+                input: .inputItemList([
+                    .inputMessage(.init(role: .user, content: .textInput("Hello")))
+                ])
+            )
+        )
+
+        XCTAssertEqual(urlSession.dataAsyncCalls[0].request.url?.path, "/v1/responses/compact")
+        XCTAssertEqual(result.object, "response.compaction")
+        XCTAssertEqual(result.usage?.totalTokens, 577)
+        guard case .inputMessage(let message) = result.output[0] else {
+            XCTFail("Expected compact output to preserve the user message")
+            return
+        }
+        XCTAssertEqual(message.role, .user)
+        guard case .item(.CompactionSummaryItemParam(let compaction)) = result.output[1] else {
+            XCTFail("Expected compact output to include a compaction item")
+            return
+        }
+        XCTAssertEqual(compaction.encryptedContent, "encrypted")
+    }
+
     func testCreateResponseWithFunctionTool() async throws {
         // Build a simple JSON schema: { "type":"object", "properties":{ "foo":{ "type":"string" } }, "required":["foo"] }
         let propSchema = JSONSchema(fields: [

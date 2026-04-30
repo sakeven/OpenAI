@@ -84,4 +84,99 @@ final class ModelResponseEventsStreamInterpreterTests: XCTestCase {
             XCTFail("Expected .outputText(.delta), got \(receivedEvent)")
         }
     }
+
+    func testParsesWebSearchOutputItemDoneWithApiSource() async throws {
+        let expectation = XCTestExpectation(description: "Web search output item received")
+        var receivedEvent: ResponseStreamEvent?
+        var receivedError: Error?
+
+        interpreter.setCallbackClosures { event in
+            Task {
+                await MainActor.run {
+                    receivedEvent = event
+                    expectation.fulfill()
+                }
+            }
+        } onError: { error in
+            Task {
+                await MainActor.run {
+                    receivedError = error
+                    expectation.fulfill()
+                }
+            }
+        }
+
+        let json = """
+        {"type":"response.output_item.done","item":{"id":"ws_1","type":"web_search_call","status":"completed","action":{"type":"search","queries":["finance: SMH"],"query":"finance: SMH","sources":[{"type":"api","name":"oai-finance"}]}},"output_index":1,"sequence_number":105}
+        """
+        interpreter.processData("data: \(json)\n\n".data(using: .utf8)!)
+
+        await fulfillment(of: [expectation], timeout: 1.0)
+
+        XCTAssertNil(receivedError)
+        guard case .outputItem(.done(let doneEvent)) = receivedEvent else {
+            XCTFail("Expected .outputItem(.done), got \(String(describing: receivedEvent))")
+            return
+        }
+
+        guard case .WebSearchToolCall(let webSearchToolCall) = doneEvent.item else {
+            XCTFail("Expected WebSearchToolCall, got \(doneEvent.item)")
+            return
+        }
+
+        guard case .WebSearchActionSearch(let action) = webSearchToolCall.action else {
+            XCTFail("Expected WebSearchActionSearch, got \(String(describing: webSearchToolCall.action))")
+            return
+        }
+
+        XCTAssertEqual(action.query, "finance: SMH")
+        guard case .WebSearchActionSearchAPISource(let source) = action.sources?.first else {
+            XCTFail("Expected WebSearchActionSearchAPISource, got \(String(describing: action.sources?.first))")
+            return
+        }
+        XCTAssertEqual(source.name, "oai-finance")
+    }
+
+    func testParsesCompactionOutputItemDone() async throws {
+        let expectation = XCTestExpectation(description: "Compaction output item received")
+        var receivedEvent: ResponseStreamEvent?
+        var receivedError: Error?
+
+        interpreter.setCallbackClosures { event in
+            Task {
+                await MainActor.run {
+                    receivedEvent = event
+                    expectation.fulfill()
+                }
+            }
+        } onError: { error in
+            Task {
+                await MainActor.run {
+                    receivedError = error
+                    expectation.fulfill()
+                }
+            }
+        }
+
+        let json = """
+        {"type":"response.output_item.done","item":{"id":"cmp_1","type":"compaction","encrypted_content":"encrypted"},"output_index":1,"sequence_number":106}
+        """
+        interpreter.processData("data: \(json)\n\n".data(using: .utf8)!)
+
+        await fulfillment(of: [expectation], timeout: 1.0)
+
+        XCTAssertNil(receivedError)
+        guard case .outputItem(.done(let doneEvent)) = receivedEvent else {
+            XCTFail("Expected .outputItem(.done), got \(String(describing: receivedEvent))")
+            return
+        }
+
+        guard case .CompactionBody(let compaction) = doneEvent.item else {
+            XCTFail("Expected CompactionBody, got \(doneEvent.item)")
+            return
+        }
+
+        XCTAssertEqual(compaction.id, "cmp_1")
+        XCTAssertEqual(compaction.encryptedContent, "encrypted")
+    }
 }

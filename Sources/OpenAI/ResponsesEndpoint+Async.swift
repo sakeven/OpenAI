@@ -11,6 +11,11 @@ extension ResponsesEndpoint: ResponsesEndpointAsync {
     public func createResponse(query: CreateModelResponseQuery) async throws -> ResponseObject {
         try await asyncClient.performRequest(request: makeCreateResponseRequest(query: query))
     }
+
+    /// Runs a compaction pass over a Responses conversation window.
+    public func compactResponse(query: CompactModelResponseQuery) async throws -> CompactedResponseObject {
+        try await asyncClient.performRequest(request: makeCompactResponseRequest(query: query))
+    }
     
     public func createResponseStreaming(query: CreateModelResponseQuery) -> AsyncThrowingStream<ResponseStreamEvent, Error> {
         return AsyncThrowingStream { continuation in

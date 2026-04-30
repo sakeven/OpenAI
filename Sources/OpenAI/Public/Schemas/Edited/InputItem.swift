@@ -20,6 +20,7 @@ public enum InputItem: Codable, Hashable, Sendable {
         case _type = "type"
     }
     
+    /// Decodes both SDK wrapper discriminators and raw Responses item payloads returned by the API.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let discriminator = try container.decode(
@@ -31,13 +32,26 @@ public enum InputItem: Codable, Hashable, Sendable {
             self = .inputMessage(try .init(from: decoder))
         case "Item", "#/components/schemas/Item":
             self = .item(try .init(from: decoder))
-        case "ItemReference", "#/components/schemas/ItemReference":
+        case "ItemReference", "#/components/schemas/ItemReference", "item_reference":
             self = .itemReference(try .init(from: decoder))
         default:
-            throw Swift.DecodingError.unknownOneOfDiscriminator(
-                discriminatorKey: CodingKeys._type,
-                discriminatorValue: discriminator,
-                codingPath: decoder.codingPath
+            var errors: [any Error] = []
+            do {
+                self = .item(try .init(from: decoder))
+                return
+            } catch {
+                errors.append(error)
+            }
+            do {
+                self = .inputMessage(try .init(from: decoder))
+                return
+            } catch {
+                errors.append(error)
+            }
+            throw Swift.DecodingError.failedToDecodeOneOfSchema(
+                type: Self.self,
+                codingPath: decoder.codingPath,
+                errors: errors
             )
         }
     }

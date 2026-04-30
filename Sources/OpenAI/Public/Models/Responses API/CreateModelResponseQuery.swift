@@ -34,6 +34,9 @@ public struct CreateModelResponseQuery: Codable, Equatable, Sendable {
     /// - `code_interpreter_call.outputs`: Includes the outputs of python code execution in code interpreter tool call items.
     public let include: [Schemas.IncludeEnum]?
 
+    /// Server-side context management options applied while generating the response.
+    public let contextManagement: [ContextManagement]?
+
     /// Whether to run the model response in the background. [Learn more](https://platform.openai.com/docs/guides/background).
     public let background: Bool?
     
@@ -129,6 +132,7 @@ public struct CreateModelResponseQuery: Codable, Equatable, Sendable {
         input: Input,
         model: String,
         include: [Schemas.IncludeEnum]? = nil,
+        contextManagement: [ContextManagement]? = nil,
         background: Bool? = nil,
         instructions: String? = nil,
         maxOutputTokens: Int? = nil,
@@ -151,6 +155,7 @@ public struct CreateModelResponseQuery: Codable, Equatable, Sendable {
         self.input = input
         self.model = model
         self.include = include
+        self.contextManagement = contextManagement
         self.background = background
         self.instructions = instructions
         self.maxOutputTokens = maxOutputTokens
@@ -175,6 +180,7 @@ public struct CreateModelResponseQuery: Codable, Equatable, Sendable {
         case input
         case model
         case include
+        case contextManagement = "context_management"
         case background
         case instructions
         case maxOutputTokens = "max_output_tokens"

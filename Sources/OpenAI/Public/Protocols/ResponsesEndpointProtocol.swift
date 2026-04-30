@@ -12,6 +12,12 @@ public protocol ResponsesEndpointProtocol: ResponsesEndpointModern {
         query: CreateModelResponseQuery,
         completion: @escaping @Sendable (Result<ResponseObject, Error>) -> Void
     ) -> CancellableRequest
+
+    /// Runs a compaction pass over a Responses conversation window.
+    func compactResponse(
+        query: CompactModelResponseQuery,
+        completion: @escaping @Sendable (Result<CompactedResponseObject, Error>) -> Void
+    ) -> CancellableRequest
     
     func createResponseStreaming(
         query: CreateModelResponseQuery,

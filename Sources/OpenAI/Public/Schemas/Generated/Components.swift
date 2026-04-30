@@ -12571,7 +12571,7 @@ public enum Components {
             ///
             ///
             /// - Remark: Generated from `#/components/schemas/WebSearchActionSearch/SourcesPayload`.
-            public struct SourcesPayloadPayload: Codable, Hashable, Sendable {
+            public struct WebSearchActionSearchURLSource: Codable, Hashable, Sendable {
                 /// The type of source. Always `url`.
                 ///
                 ///
@@ -12583,19 +12583,19 @@ public enum Components {
                 ///
                 ///
                 /// - Remark: Generated from `#/components/schemas/WebSearchActionSearch/SourcesPayload/type`.
-                public var _type: Components.Schemas.WebSearchActionSearch.SourcesPayloadPayload._TypePayload
+                public var _type: Components.Schemas.WebSearchActionSearch.WebSearchActionSearchURLSource._TypePayload
                 /// The URL of the source.
                 ///
                 ///
                 /// - Remark: Generated from `#/components/schemas/WebSearchActionSearch/SourcesPayload/url`.
                 public var url: Swift.String
-                /// Creates a new `SourcesPayloadPayload`.
+                /// Creates a new `WebSearchActionSearchURLSource`.
                 ///
                 /// - Parameters:
                 ///   - _type: The type of source. Always `url`.
                 ///   - url: The URL of the source.
                 public init(
-                    _type: Components.Schemas.WebSearchActionSearch.SourcesPayloadPayload._TypePayload,
+                    _type: Components.Schemas.WebSearchActionSearch.WebSearchActionSearchURLSource._TypePayload,
                     url: Swift.String
                 ) {
                     self._type = _type
@@ -12604,6 +12604,71 @@ public enum Components {
                 public enum CodingKeys: String, CodingKey {
                     case _type = "type"
                     case url
+                }
+            }
+            /// A source backed by an OpenAI native API.
+            public struct WebSearchActionSearchAPISource: Codable, Hashable, Sendable {
+                /// The type of source. Always `api`.
+                @frozen public enum _TypePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case api = "api"
+                }
+                /// The type of source. Always `api`.
+                public var _type: Components.Schemas.WebSearchActionSearch.WebSearchActionSearchAPISource._TypePayload
+                /// The API source name.
+                public var name: Swift.String
+                /// Creates a new `WebSearchActionSearchAPISource`.
+                ///
+                /// - Parameters:
+                ///   - _type: The type of source. Always `api`.
+                ///   - name: The API source name.
+                public init(
+                    _type: Components.Schemas.WebSearchActionSearch.WebSearchActionSearchAPISource._TypePayload,
+                    name: Swift.String
+                ) {
+                    self._type = _type
+                    self.name = name
+                }
+                public enum CodingKeys: String, CodingKey {
+                    case _type = "type"
+                    case name
+                }
+            }
+            /// A source used in the search.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/WebSearchActionSearch/SourcesPayload`.
+            @frozen public enum SourcesPayloadPayload: Codable, Hashable, Sendable {
+                /// - Remark: Generated from `#/components/schemas/WebSearchActionSearch/SourcesPayload/case1`.
+                case WebSearchActionSearchURLSource(Components.Schemas.WebSearchActionSearch.WebSearchActionSearchURLSource)
+                /// - Remark: Generated from `#/components/schemas/WebSearchActionSearch/SourcesPayload/case2`.
+                case WebSearchActionSearchAPISource(Components.Schemas.WebSearchActionSearch.WebSearchActionSearchAPISource)
+                public init(from decoder: any Decoder) throws {
+                    var errors: [any Error] = []
+                    do {
+                        self = .WebSearchActionSearchURLSource(try .init(from: decoder))
+                        return
+                    } catch {
+                        errors.append(error)
+                    }
+                    do {
+                        self = .WebSearchActionSearchAPISource(try .init(from: decoder))
+                        return
+                    } catch {
+                        errors.append(error)
+                    }
+                    throw Swift.DecodingError.failedToDecodeOneOfSchema(
+                        type: Self.self,
+                        codingPath: decoder.codingPath,
+                        errors: errors
+                    )
+                }
+                public func encode(to encoder: any Encoder) throws {
+                    switch self {
+                        case let .WebSearchActionSearchURLSource(value):
+                            try value.encode(to: encoder)
+                        case let .WebSearchActionSearchAPISource(value):
+                            try value.encode(to: encoder)
+                    }
                 }
             }
             /// The sources used in the search.

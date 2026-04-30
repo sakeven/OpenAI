@@ -15,6 +15,13 @@ extension ResponsesEndpoint: ResponsesEndpointCombine {
             request: makeCreateResponseRequest(query: query)
         )
     }
+
+    /// Runs a compaction pass over a Responses conversation window.
+    public func compactResponse(query: CompactModelResponseQuery) -> AnyPublisher<CompactedResponseObject, any Error> {
+        combineClient.performRequest(
+            request: makeCompactResponseRequest(query: query)
+        )
+    }
     
     public func createResponseStreaming(query: CreateModelResponseQuery) -> AnyPublisher<Result<ResponseStreamEvent, any Error>, any Error> {
         let progress = SendablePassthroughSubject(

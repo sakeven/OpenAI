@@ -11,6 +11,8 @@ import Combine
 
 public protocol ResponsesEndpointCombine: Sendable {
     func createResponse(query: CreateModelResponseQuery) -> AnyPublisher<ResponseObject, Error>
+    /// Runs a compaction pass over a Responses conversation window.
+    func compactResponse(query: CompactModelResponseQuery) -> AnyPublisher<CompactedResponseObject, Error>
     func createResponseStreaming(query: CreateModelResponseQuery) -> AnyPublisher<Result<ResponseStreamEvent, Error>, Error>
 }
 #endif

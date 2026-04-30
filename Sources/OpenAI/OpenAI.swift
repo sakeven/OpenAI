@@ -416,6 +416,7 @@ extension APIPath {
     
     struct Responses {
         static let createModelResponse = Responses(stringValue: "/responses")
+        static let compactModelResponse = Responses(stringValue: "/responses/compact")
         
         static func getModelResponse(responseId: String) -> Responses {
             .init(stringValue: "/responses/\(responseId)")
