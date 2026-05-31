@@ -84,6 +84,51 @@ class ResponsesEndpointTests: XCTestCase {
         XCTAssertEqual(contextManagement[0]["compact_threshold"] as? Int, 200_000)
     }
 
+    func testFunctionCallOutputDecodesRawTypedContentDiscriminators() throws {
+        let json = """
+        {
+          "type": "function_call_output",
+          "call_id": "call_123",
+          "output": [
+            { "type": "input_text", "text": "hello" },
+            { "type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": "auto" },
+            { "type": "input_file", "filename": "note.pdf", "file_data": "data:application/pdf;base64,AAAA" }
+          ],
+          "status": "completed"
+        }
+        """
+
+        let item = try JSONDecoder().decode(Components.Schemas.Item.self, from: json.data(using: .utf8)!)
+        guard case .FunctionCallOutputItemParam(let outputItem) = item else {
+            XCTFail("Expected function call output item")
+            return
+        }
+
+        guard case .case2(let content) = outputItem.output else {
+            XCTFail("Expected typed function output content")
+            return
+        }
+
+        XCTAssertEqual(content.count, 3)
+        guard case .inputTextContentParam(let textContent) = content[0] else {
+            XCTFail("Expected input_text content")
+            return
+        }
+        XCTAssertEqual(textContent.text, "hello")
+
+        guard case .inputImageContentParamAutoParam(let imageContent) = content[1] else {
+            XCTFail("Expected input_image content")
+            return
+        }
+        XCTAssertEqual(imageContent._type, .inputImage)
+
+        guard case .inputFileContentParam(let fileContent) = content[2] else {
+            XCTFail("Expected input_file content")
+            return
+        }
+        XCTAssertEqual(fileContent._type, .inputFile)
+    }
+
     func testCompactResponse() async throws {
         let json = """
         {"id":"resp_001","object":"response.compaction","created_at":1764967971,"output":[{"id":"msg_000","type":"message","status":"completed","content":[{"type":"input_text","text":"Hello"}],"role":"user"},{"id":"cmp_001","type":"compaction","encrypted_content":"encrypted"}],"usage":{"input_tokens":139,"input_tokens_details":{"cached_tokens":0},"output_tokens":438,"output_tokens_details":{"reasoning_tokens":64},"total_tokens":577}}

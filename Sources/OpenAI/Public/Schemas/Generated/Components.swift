@@ -15605,11 +15605,11 @@ public enum Components {
                             forKey: ._type
                         )
                         switch discriminator {
-                            case "InputTextContentParam", "#/components/schemas/InputTextContentParam":
+                            case "InputTextContentParam", "#/components/schemas/InputTextContentParam", "input_text":
                                 self = .inputTextContentParam(try .init(from: decoder))
-                            case "InputImageContentParamAutoParam", "#/components/schemas/InputImageContentParamAutoParam":
+                            case "InputImageContentParamAutoParam", "#/components/schemas/InputImageContentParamAutoParam", "input_image":
                                 self = .inputImageContentParamAutoParam(try .init(from: decoder))
-                            case "InputFileContentParam", "#/components/schemas/InputFileContentParam":
+                            case "InputFileContentParam", "#/components/schemas/InputFileContentParam", "input_file":
                                 self = .inputFileContentParam(try .init(from: decoder))
                             default:
                                 throw Swift.DecodingError.unknownOneOfDiscriminator(

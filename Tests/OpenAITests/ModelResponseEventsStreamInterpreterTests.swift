@@ -85,6 +85,42 @@ final class ModelResponseEventsStreamInterpreterTests: XCTestCase {
         }
     }
 
+    func testParsesResponseCompletedWithoutOutputField() async throws {
+        let expectation = XCTestExpectation(description: "Responses stream completed event received")
+        var receivedEvent: ResponseStreamEvent?
+        var receivedError: Error?
+
+        interpreter.setCallbackClosures { event in
+            Task {
+                await MainActor.run {
+                    receivedEvent = event
+                    expectation.fulfill()
+                }
+            }
+        } onError: { error in
+            Task {
+                await MainActor.run {
+                    receivedError = error
+                    expectation.fulfill()
+                }
+            }
+        }
+
+        let json = """
+        {"type":"response.completed","response":{"id":"resp_1","object":"response","created_at":1780207976,"status":"completed","background":false,"completed_at":1780207988,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Test","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5","moderation":null,"parallel_tool_calls":false,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"cache","prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"medium","summary":null},"safety_identifier":"user-1","service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"json_schema","description":"Payload","name":"payload","schema":{"additionalProperties":false,"type":"object","required":["title"],"properties":{"title":{"type":"string"}}},"strict":true},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":1,"input_tokens_details":{"cached_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":2},"user":null,"metadata":{}},"sequence_number":7}
+        """
+        interpreter.processData("data: \(json)\n\n".data(using: .utf8)!)
+
+        await fulfillment(of: [expectation], timeout: 1.0)
+
+        XCTAssertNil(receivedError)
+        guard case .completed(let event) = receivedEvent else {
+            XCTFail("Expected .completed, got \(String(describing: receivedEvent))")
+            return
+        }
+        XCTAssertEqual(event.response.output, [])
+    }
+
     func testParsesWebSearchOutputItemDoneWithApiSource() async throws {
         let expectation = XCTestExpectation(description: "Web search output item received")
         var receivedEvent: ResponseStreamEvent?
