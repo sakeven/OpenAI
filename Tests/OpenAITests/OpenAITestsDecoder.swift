@@ -197,6 +197,24 @@ class OpenAITestsDecoder: XCTestCase {
         try encode(tool, expectedValue)
     }
 
+    func testImageGenerationToolDecodesGPTImage2CodexModel() throws {
+        let data = """
+        {
+            "type": "image_generation",
+            "model": "gpt-image-2-codex",
+            "partial_images": 2
+        }
+        """
+
+        let tool = try JSONDecoder().decode(Tool.self, from: Data(data.utf8))
+
+        guard case .imageGenerationTool(let imageTool) = tool else {
+            XCTFail("Expected an image generation tool")
+            return
+        }
+        XCTAssertEqual(imageTool.model, .gptImage2Codex)
+    }
+
     func testChatQueryWithVision() async throws {
         let chatQuery = ChatQuery(
             messages: [
