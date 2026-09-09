@@ -84,6 +84,12 @@ dependencies: [
 ]
 ```
 
+### GPT Image 2.5 in Responses
+
+`Tool.imageGenerationTool` supports `.gptImage2_5Sunburst` (`gpt-image-2.5-sunburst`) and `.gptImage2_5Flare` (`gpt-image-2.5-flare`) in `Components.Schemas.ImageGenTool.ModelPayload`. These identifiers encode in the image tool's `model` field and decode from Responses tool definitions. Existing GPT Image 2 and Codex model identifiers remain available. The image tool schema lives in `Sources/OpenAI/Public/Schemas/Edited/ImageGenTool.swift`; no endpoint, dependency, or permission changes are required. Account/backend availability still applies; API support does not establish Codex OAuth availability.
+
+Image-generation output `result` is optional: Codex can omit it in streamed items, and APIs can return `null` before a result is available. Added events, done events, and terminal responses all decode this shape without synthesizing an empty image. Output item events are dispatched by their actual `type`, so done events reach final-result handlers even though they share the added-event payload shape. Consumers must wait for a valid final payload or handle failed/incomplete generation; malformed non-string results still fail decoding. This changes the Swift result property to `String?` without changing authentication, endpoints, or dependencies.
+
 ## Usage
 
 ### Initialization

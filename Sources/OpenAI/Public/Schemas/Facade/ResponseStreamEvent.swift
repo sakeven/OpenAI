@@ -217,7 +217,20 @@ public enum ResponseStreamEvent: Codable, Equatable, Sendable {
         case unexpectedParsingCase
     }
 
+    /// Routes output items by their wire event type so done events reach final-result handlers.
     public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: ResponseOutputItemAddedEvent.CodingKeys.self)
+        let eventType = try container.decode(String.self, forKey: .type)
+        switch ModelResponseStreamEventType(rawValue: eventType) {
+        case .responseOutputItemAdded:
+            self = .outputItem(.added(try ResponseOutputItemAddedEvent(from: decoder)))
+            return
+        case .responseOutputItemDone:
+            self = .outputItem(.done(try ResponseOutputItemDoneEvent(from: decoder)))
+            return
+        default:
+            break
+        }
         do {
             // Decoding Response Event
             let responseEvent = try ResponseEvent(from: decoder)
@@ -241,24 +254,6 @@ public enum ResponseStreamEvent: Codable, Equatable, Sendable {
                 default:
                     throw ResponseStreamEventDecodingError.unknownEventType(responseEvent.type)
             }
-            return
-        } catch {
-            // Do nothing, will try other coding types
-        }
-
-        do {
-            // Decoding Output Item events
-            let outputItemAddedEvent = try ResponseOutputItemAddedEvent(from: decoder)
-            self = .outputItem(.added(outputItemAddedEvent))
-            return
-        } catch {
-            // Do nothing, will try other coding types
-        }
-
-        do {
-            // Decoding Output Item events
-            let outputItemDoneEvent = try ResponseOutputItemDoneEvent(from: decoder)
-            self = .outputItem(.done(outputItemDoneEvent))
             return
         } catch {
             // Do nothing, will try other coding types
