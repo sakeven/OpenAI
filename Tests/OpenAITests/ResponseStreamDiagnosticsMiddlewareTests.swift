@@ -4,13 +4,13 @@ import XCTest
 
 /// Covers the production factory wiring between complete unknown events and middleware diagnostics.
 final class ResponseStreamDiagnosticsMiddlewareTests: XCTestCase {
-    /// Receives diagnostics and still delivers a later supported event without a live network request.
-    func testFactoryForwardsSkippedPayloadWithoutEndingStream() async {
-        let diagnostic = expectation(description: "Metadata delivered to middleware")
+    /// Metadata bypasses diagnostics while unknown payloads and later business events keep their order.
+    func testFactorySkipsMetadataAndForwardsOnlyUnknownPayload() async {
+        let diagnostic = expectation(description: "Unknown event delivered to middleware")
         let keepalive = expectation(description: "Later event delivered to stream")
-        let payload = #"{"type":"response.metadata","metadata":{"detail":"完整内容"}}"#
+        let payload = #"{"type":"provider.new_event","metadata":{"detail":"完整内容"}}"#
         let middleware = DiagnosticsMiddleware { type, data in
-            XCTAssertEqual(type, "response.metadata")
+            XCTAssertEqual(type, "provider.new_event")
             XCTAssertEqual(data, Data(payload.utf8))
             diagnostic.fulfill()
         }
@@ -29,7 +29,8 @@ final class ResponseStreamDiagnosticsMiddlewareTests: XCTestCase {
             onProcessingError: { _, error in XCTFail("Unexpected failure: \(error)") },
             onComplete: { _, _ in }
         )
-        let wire = "data: \(payload)\n\nevent: keepalive\ndata: {}\n\n"
+        let metadata = #"{"type":"response.metadata","metadata":{"openai_chatgpt_moderation_metadata":{"prompt":{},"generation":{}}}}"#
+        let wire = "event: response.metadata\ndata: \(metadata)\n\ndata: \(payload)\n\ndata: \(metadata)\n\nevent: keepalive\ndata: {}\n\n"
         session.urlSession(URLSessionMock(), dataTask: DataTaskMock(), didReceive: Data(wire.utf8))
         await fulfillment(of: [diagnostic, keepalive], timeout: 2, enforceOrder: true)
     }

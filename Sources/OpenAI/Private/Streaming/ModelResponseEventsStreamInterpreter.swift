@@ -54,7 +54,7 @@ final class ModelResponseEventsStreamInterpreter: @unchecked Sendable, StreamInt
         parser.processData(data: data)
     }
     
-    /// Dispatches supported events and reports unknown payloads for diagnostics before skipping them.
+    /// Dispatches business events, silently consumes metadata, and reports only unknown types.
     private func processEvent(_ event: ServerSentEventsStreamParser.Event) throws {
         let finalEvent = event //.fixMappingError()
         var eventType = finalEvent.eventType
@@ -73,8 +73,9 @@ final class ModelResponseEventsStreamInterpreter: @unchecked Sendable, StreamInt
         }
 
         do {
-            let responseStreamEvent = try responseStreamEvent(modelResponseEventType: modelResponseEventType, data: finalEvent.data)
-            onEventDispatched?(responseStreamEvent)
+            if let responseStreamEvent = try responseStreamEvent(modelResponseEventType: modelResponseEventType, data: finalEvent.data) {
+                onEventDispatched?(responseStreamEvent)
+            }
         } catch {
             print("modelResponseEventType \(modelResponseEventType) data: \(String(data: finalEvent.data, encoding: .utf8) ?? "") \(error) ")
             throw error
@@ -87,11 +88,14 @@ final class ModelResponseEventsStreamInterpreter: @unchecked Sendable, StreamInt
     
     private typealias Schemas = Components.Schemas
     
+    /// Returns nil for advisory metadata that has no consumer; business payloads retain strict decoding.
     private func responseStreamEvent(
         modelResponseEventType: ModelResponseStreamEventType,
         data: Data
-    ) throws -> ResponseStreamEvent {
+    ) throws -> ResponseStreamEvent? {
         switch modelResponseEventType {
+        case .responseMetadata:
+                nil
         case .responseCreated:
                 .created(try decode(data: data))
         case .responseInProgress:

@@ -14,6 +14,8 @@ enum ModelResponseStreamEventType: String {
     case responseFailed = "response.failed"
     case responseIncomplete = "response.incomplete"
     case responseQueued = "response.queued"
+    /// Provider metadata is recognized but intentionally omitted from business events and diagnostics.
+    case responseMetadata = "response.metadata"
     
     case responseOutputItemAdded = "response.output_item.added"
     case responseOutputItemDone = "response.output_item.done"

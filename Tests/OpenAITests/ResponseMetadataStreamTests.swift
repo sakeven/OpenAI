@@ -11,15 +11,17 @@ final class ResponseMetadataStreamTests: XCTestCase, @unchecked Sendable {
     private var errors: [Error] = []
     /// Full diagnostic payloads observed before unsupported events are skipped.
     private var unknownEvents: [(type: String, data: Data)] = []
+    /// Sanitized provider moderation metadata with the same nesting as the observed stream event.
+    private let moderationJSON = #"{"type":"response.metadata","response_id":"resp_metadata_test","sequence_number":62,"metadata":{"openai_chatgpt_moderation_metadata":{"prompt":{"omnimod":{"protection_type":"omnimod","outputs":[{"results":[{"category_flags":{"A1":false,"REFUSED":false}}],"is_blocked":false}]}},"generation":{},"tool_call":{},"tool_response":{}}}}"#
     /// A terminal response fixture with the fields required by the SDK schema.
     private let completedJSON = #"{"type":"response.completed","response":{"id":"resp_1","object":"response","created_at":1780207976,"status":"completed","background":false,"completed_at":1780207988,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Test","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5","moderation":null,"parallel_tool_calls":false,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"cache","prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"medium","summary":null},"safety_identifier":"user-1","service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"json_schema","description":"Payload","name":"payload","schema":{"additionalProperties":false,"type":"object","required":["title"],"properties":{"title":{"type":"string"}}},"strict":true},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":1,"input_tokens_details":{"cached_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":2},"user":null,"metadata":{}},"sequence_number":7}"#
 
-    /// Metadata before and after completion must not drop text or terminate fragmented streams.
+    /// Metadata is recognized without diagnostics before or after completion, including fragmented streams.
     func testMetadataPreservesTextAndCompletion() {
         for explicitEvent in [false, true] {
             for fragmented in [false, true] {
                 let interpreter = makeInterpreter()
-                let metadata = frame(#"{"type":"response.metadata","metadata":{"test":"value"}}"#,
+                let metadata = frame(moderationJSON,
                                      event: explicitEvent ? "response.metadata" : nil)
                 let delta = frame(#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"你好","logprobs":[],"sequence_number":1}"#)
                 let stream = Data((metadata + delta + metadata + frame(completedJSON) + metadata).utf8)
@@ -31,6 +33,7 @@ final class ResponseMetadataStreamTests: XCTestCase, @unchecked Sendable {
                     interpreter.processData(stream)
                 }
                 XCTAssertTrue(errors.isEmpty, "Unexpected errors: \(errors)")
+                XCTAssertTrue(unknownEvents.isEmpty, "Known metadata must not produce diagnostic records")
                 XCTAssertEqual(events.count, 2)
                 guard events.count == 2,
                       case .outputText(.delta(let text)) = events[0],
@@ -67,6 +70,22 @@ final class ResponseMetadataStreamTests: XCTestCase, @unchecked Sendable {
         }
         XCTAssertEqual(serverError.message, "Test failure")
         XCTAssertNotNil(failure.response.error)
+    }
+
+    /// Internal moderation flags do not replace the server's actual refusal event or create diagnostics.
+    func testMetadataPreservesRefusalWithoutDiagnostics() {
+        let interpreter = makeInterpreter()
+        let metadata = moderationJSON.replacingOccurrences(of: "false", with: "true")
+        let refusal = frame(#"{"type":"response.refusal.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"Refusal text","sequence_number":63}"#)
+        interpreter.processData(Data((frame(metadata) + refusal).utf8))
+        XCTAssertTrue(errors.isEmpty)
+        XCTAssertTrue(unknownEvents.isEmpty)
+        XCTAssertEqual(events.count, 1)
+        guard case .refusal(.delta(let event)) = events.first else {
+            XCTFail("Expected the explicit refusal after metadata")
+            return
+        }
+        XCTAssertEqual(event.delta, "Refusal text")
     }
 
     /// Unknown types from either SSE headers or JSON payloads must preserve later completion.
@@ -119,14 +138,14 @@ final class ResponseMetadataStreamTests: XCTestCase, @unchecked Sendable {
     func testUnknownDiagnosticsPreserveCompletePayload() {
         for explicitEvent in [false, true] {
             let interpreter = makeInterpreter()
-            let payload = "{\n  \"type\": \"response.metadata\",\n  \"metadata\": {\"detail\":\"完整内容\",\"value\":42}\n}"
+            let payload = "{\n  \"type\": \"provider.new_event\",\n  \"metadata\": {\"detail\":\"完整内容\",\"value\":42}\n}"
             let dataLines = payload.components(separatedBy: "\n").map { "data: \($0)\n" }.joined()
-            let stream = (explicitEvent ? "event: response.metadata\n" : "") + dataLines + "\n"
+            let stream = (explicitEvent ? "event: provider.new_event\n" : "") + dataLines + "\n"
             for byte in stream.utf8 {
                 interpreter.processData(Data([byte]))
             }
             XCTAssertEqual(unknownEvents.count, 1)
-            XCTAssertEqual(unknownEvents.first?.type, "response.metadata")
+            XCTAssertEqual(unknownEvents.first?.type, "provider.new_event")
             XCTAssertEqual(unknownEvents.first?.data, Data(payload.utf8))
             XCTAssertTrue(events.isEmpty)
             XCTAssertTrue(errors.isEmpty)
