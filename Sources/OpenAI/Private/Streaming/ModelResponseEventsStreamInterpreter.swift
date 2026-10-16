@@ -13,12 +13,12 @@ final class ModelResponseEventsStreamInterpreter: @unchecked Sendable, StreamInt
     private var onEventDispatched: ((ResponseStreamEvent) -> Void)?
     private var onError: ((Error) -> Void)?
     private let decoder = JSONDecoder()
+    /// Receives full, reassembled payloads for event types outside the supported schema.
+    private let onUnknownEvent: (@Sendable (String, Data) -> Void)?
     
-    enum InterpreterError: DescribedError {
-        case unknownEventType(String)
-    }
-    
-    init () {
+    /// Installs the optional diagnostics observer without changing stream result or error delivery.
+    init(onUnknownEvent: (@Sendable (String, Data) -> Void)? = nil) {
+        self.onUnknownEvent = onUnknownEvent
         parser.setCallbackClosures { [weak self] event in
             guard let self else {
                 return
@@ -54,19 +54,22 @@ final class ModelResponseEventsStreamInterpreter: @unchecked Sendable, StreamInt
         parser.processData(data: data)
     }
     
+    /// Dispatches supported events and reports unknown payloads for diagnostics before skipping them.
     private func processEvent(_ event: ServerSentEventsStreamParser.Event) throws {
         let finalEvent = event //.fixMappingError()
         var eventType = finalEvent.eventType
 
         /// If the SSE `event` property is not specified by the provider service, our parser defaults it to "message" which is not a valid model response type.
         /// In this case we check the `data.type` property for a valid model response type.
-        if eventType == "message" || eventType.isEmpty,
-           let payloadEventType = finalEvent.getPayloadType() {
-            eventType = payloadEventType
+        if eventType == "message" || eventType.isEmpty {
+            eventType = try finalEvent.getPayloadType()
         }
 
+        // Providers can add event types independently of the SDK. Unknown types do not
+        // terminate the stream; decoding failures for supported events still propagate.
         guard let modelResponseEventType = ModelResponseStreamEventType(rawValue: eventType) else {
-            throw InterpreterError.unknownEventType(eventType)
+            onUnknownEvent?(eventType, finalEvent.data)
+            return
         }
 
         do {
@@ -244,7 +247,8 @@ private extension ServerSentEventsStreamParser.Event {
 
     struct TypeEnvelope: Decodable { let type: String }
 
-    func getPayloadType() -> String? {
-        try? JSONDecoder().decode(TypeEnvelope.self, from: self.data).type
+    /// Reads the payload discriminator, preserving errors for malformed or missing event types.
+    func getPayloadType() throws -> String {
+        try JSONDecoder().decode(TypeEnvelope.self, from: self.data).type
     }
 }
