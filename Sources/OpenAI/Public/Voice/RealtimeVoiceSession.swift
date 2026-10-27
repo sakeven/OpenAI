@@ -178,7 +178,7 @@ public final class RealtimeVoiceSession: NSObject {
     /// Returns a complete application result using the selected backend's event dialect.
     public func respond(to request: VoiceDelegation, text: String) async throws {
         if usesCodex {
-            try await send(CodexVoiceProtocol.context(text, delegationID: request.id))
+            try await sendCodexContext(text, delegationID: request.id)
         } else {
             try await send(RealtimeVoiceProtocol.result(text, id: request.id))
             pendingCallIDs.remove(request.id)
@@ -189,10 +189,17 @@ public final class RealtimeVoiceSession: NSObject {
     /// Supplies a full application update after reconnection, without reusing a delegation ID from the old call.
     public func provideContext(_ text: String) async throws {
         if usesCodex {
-            try await send(CodexVoiceProtocol.context(text))
+            try await sendCodexContext(text)
         } else {
             try await send(["type": "conversation.item.create",
                             "item": VoiceMessage(role: .user, text: text).wireValue])
+        }
+    }
+
+    /// Sends ordered, bounded updates for task replies, resumed results and reading alike.
+    private func sendCodexContext(_ text: String, delegationID: String? = nil) async throws {
+        for event in CodexVoiceProtocol.contextEvents(text, delegationID: delegationID) {
+            try await send(event)
         }
     }
 
@@ -297,7 +304,8 @@ public final class RealtimeVoiceSession: NSObject {
                         for event in RealtimeVoiceProtocol.historyEvents(history) { try await send(event) }
                     }
                     if let readingText {
-                        try await send(usesCodex ? CodexVoiceProtocol.context(readingText) : RealtimeVoiceProtocol.reading(readingText))
+                        if usesCodex { try await sendCodexContext(readingText) }
+                        else { try await send(RealtimeVoiceProtocol.reading(readingText)) }
                         try await Task.sleep(for: .seconds(300))
                         if webView === web { finish(error: VoiceSessionError.readingTimedOut) }
                     } else {

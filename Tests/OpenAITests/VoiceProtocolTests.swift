@@ -24,6 +24,10 @@ final class VoiceProtocolTests: XCTestCase {
         let contents = try XCTUnwrap(items.first?["content"] as? [[String: Any]])
         XCTAssertEqual(contents.first?["text"] as? String, text)
         XCTAssertEqual(session["model"] as? String, "gpt-live-1.1-codex")
+        let instructions = try XCTUnwrap(session["instructions"] as? String)
+        XCTAssertTrue(instructions.hasPrefix("Test\n"))
+        XCTAssertTrue(instructions.contains("wait\nfor the part marked \"(final)\""))
+        XCTAssertTrue(instructions.contains("Never read part headings aloud."))
         let audio = try XCTUnwrap(session["audio"] as? [String: Any])
         XCTAssertEqual((audio["output"] as? [String: Any])?["voice"] as? String, "juniper")
     }
@@ -53,12 +57,63 @@ final class VoiceProtocolTests: XCTestCase {
     /// Both result paths preserve all text, including quotes, newlines and non-BMP characters.
     func testResultsAreNotSilentlyTruncated() throws {
         let text = String(repeating: "结果 \"quoted\" 🙂\n", count: 4000)
-        let event = CodexVoiceProtocol.context(text, delegationID: "task")
-        let content = try XCTUnwrap(event["content"] as? [[String: Any]])
-        XCTAssertEqual(content.first?["text"] as? String, text)
+        let events = CodexVoiceProtocol.contextEvents(text, delegationID: "task")
+        let parts = try events.map { event -> String in
+            XCTAssertEqual(event["type"] as? String, "delegation.context.append")
+            XCTAssertEqual(event["delegation_item_id"] as? String, "task")
+            let content = try XCTUnwrap(event["content"] as? [[String: Any]])
+            let payload = try XCTUnwrap(content.first?["text"] as? String)
+            XCTAssertLessThanOrEqual(payload.utf8.count, 500)
+            return String(payload.drop(while: { $0 != "\n" }).dropFirst())
+        }
+        XCTAssertGreaterThan(events.count, 1)
+        XCTAssertEqual(Array(parts.joined().utf8), Array(text.utf8))
         let item = try XCTUnwrap(RealtimeVoiceProtocol.result(text, id: "call")["item"] as? [String: Any])
         XCTAssertEqual(item["output"] as? String, text)
         XCTAssertEqual(item["call_id"] as? String, "call")
+    }
+
+    /// Short updates keep the original payload, including exact-limit and empty updates.
+    func testShortContextUpdatesKeepOriginalText() throws {
+        for text in ["", "今天可以办理。", String(repeating: "a", count: 500)] {
+            let events = CodexVoiceProtocol.contextEvents(text)
+            XCTAssertEqual(events.count, 1)
+            let event = try XCTUnwrap(events.first)
+            XCTAssertEqual(event["type"] as? String, "session.context.append")
+            XCTAssertNil(event["delegation_item_id"])
+            let content = try XCTUnwrap(event["content"] as? [[String: Any]])
+            XCTAssertEqual(content.first?["text"] as? String, text)
+        }
+    }
+
+    /// Resumed updates and reading use the same bound, including a single oversized grapheme cluster.
+    func testSessionContextPartsPreserveUnicodeAndMarkCompletion() throws {
+        let samples = [String(repeating: "a", count: 501),
+                       String(repeating: "杭州, 绿牌🙂 e\u{301} 👩🏽‍💻\n", count: 100),
+                       "a" + String(repeating: "\u{301}", count: 1000)]
+        for text in samples {
+            let events = CodexVoiceProtocol.contextEvents(text)
+            var restored = ""
+            for (index, event) in events.enumerated() {
+                XCTAssertEqual(event["type"] as? String, "session.context.append")
+                XCTAssertNil(event["delegation_item_id"])
+                XCTAssertEqual(event["channel"] as? String, "speakable")
+                let content = try XCTUnwrap(event["content"] as? [[String: Any]])
+                let payload = try XCTUnwrap(content.first?["text"] as? String)
+                XCTAssertLessThanOrEqual(payload.utf8.count, 500)
+                let newline = try XCTUnwrap(payload.firstIndex(of: "\n"))
+                let heading = payload[..<newline]
+                XCTAssertTrue(heading.hasPrefix("Text part \(index + 1)/\(events.count)"))
+                XCTAssertEqual(heading.contains("(final)"), index == events.count - 1)
+                XCTAssertEqual(heading.contains("wait for the final part"), index != events.count - 1)
+                restored += payload[payload.index(after: newline)...]
+                // Check the actual JSON round-trip, not just the intermediate Swift string.
+                let decoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: event)) as? [String: Any])
+                let decodedContent = try XCTUnwrap(decoded["content"] as? [[String: Any]])
+                XCTAssertEqual(decodedContent.first?["text"] as? String, payload)
+            }
+            XCTAssertEqual(Array(restored.utf8), Array(text.utf8))
+        }
     }
 
     /// Only completed, correctly addressed tool calls may enter application execution.
