@@ -29,6 +29,7 @@ This repository contains Swift community-maintained implementation over [OpenAI]
     - [Create Image Edit](#create-image-edit)
     - [Create Image Variation](#create-image-variation)
 - [Audio](#audio)
+    - [Realtime Voice](#realtime-voice)
     - [Audio Create Speech](#audio-create-speech)
     - [Audio Transcriptions](#audio-transcriptions)
     - [Audio Translations](#audio-translations)
@@ -581,6 +582,41 @@ The speech to text API provides two endpoints, transcriptions and translations, 
 Transcribe audio into whatever language the audio is in.
 Translate and transcribe the audio into english.
 File uploads are currently limited to 25 MB and the following input file types are supported: mp3, mp4, mpeg, mpga, m4a, wav, and webm.
+
+### Realtime Voice
+
+`RealtimeVoiceSession` provides an observable, cancellable WebRTC session on iOS 17+ and macOS 14+. It owns the native handshake, local WebKit media document, captions, final conversation messages, audio levels, microphone mute, and application-task delegation. Mount its `webView` in a `UIViewRepresentable` / `NSViewRepresentable` while the session is active; WebKit requires an attached view for media playback. The SDK does not provide application UI or execute delegated tasks.
+
+```swift
+let session = RealtimeVoiceSession() // MainActor
+try await session.run(
+    instructions: "Speak naturally. Delegate application tasks to the client.",
+    history: [VoiceMessage(role: .user, text: "Help me plan today.")],
+    authentication: { .apiKey(token: userSuppliedKey, host: "api.openai.com") },
+    onDelegation: { request in
+        Task { @MainActor in
+            let result = await applicationAgent(request.text)
+            try await session.respond(to: request, text: result)
+        }
+    }
+)
+```
+
+The API-key route uses `gpt-realtime-2.1`, voice `marin`, and `gpt-4o-mini-transcribe` input transcription via the documented multipart `POST /v1/realtime/calls` endpoint. Input transcription uses the WebRTC-compatible mini transcriber; its [announced retirement](https://developers.openai.com/api/docs/deprecations) is February 26, 2027. The newer `gpt-transcribe` [committed-turn workflow](https://developers.openai.com/api/docs/guides/realtime-transcription#transcribe-a-committed-turn) currently requires WebSocket. The optional host is a hostname, matching the SDK's existing configuration convention. It routes HTTPS signaling; WebRTC media uses the negotiated media addresses, so a WebSocket reverse proxy alone does not proxy the audio.
+
+For an existing Codex login, return `.codexOAuth(accessToken:accountID:)` from the authentication closure. This route uses the desktop backend `https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas`, `gpt-live-1.1-codex`, voice `cove`, and the verified `0.164.0-alpha.11.1` client identity with `OpenAI-Alpha: quicksilver=v2`. It is a product backend, not the public API contract; account eligibility and backend changes affect availability. Credentials stay in native requests and never enter the web document.
+
+`captions` is ephemeral display state. Persist the `onMessage` callback or `messages` collection instead: Codex uses authoritative `turn.done`, public Realtime uses final input transcription and successful `response.done` output items. An audio-only response's canonical text is its final audio transcript; it does not imply a separate longer written answer. Caption fragments and cancelled responses are not emitted as completed messages. Stable message IDs and speech ordering allow late input transcription to be inserted before the corresponding answer. Preserve delegated agents' complete written results separately; a spoken summary must not replace them.
+
+To pause audio while application tasks continue, call `stop()` and keep those tasks and their full results in the host application. Resume with a new `run(history:...)` using the current confirmed conversation. The optional `onReady` callback fires after conversation history replay and microphone setup, when pending result updates can be sent. Use `respond(to:text:)` only for requests from the current call; use `provideContext(_:)` for complete application results carried over from an earlier connection. Public Realtime adds this context without starting an overlapping response; Codex uses `session.context.append`. Sending completion from a stopped web view is rejected, so the application can retain the result for the replacement connection. This does not resume an interrupted utterance or save partial captions. No new permission, storage format, or package dependency is required.
+
+Pass `voice` to select an identifier from `VoiceOption.realtime` or `VoiceOption.codex`, matching the authentication route. The Codex list was verified with the desktop wingman voice catalog on 2026-10-27; display names such as Arbor and Sol map to their actual service identifiers. The application owns persistence; each call captures its voice at startup.
+
+Pass `readingText` to read complete text without requesting microphone permission. The operation completes after actual audio playback finishes. Cancelling its owning task or calling `stop()` closes media and releases the web view; starting another session ends the previous session in the same process. Initial connection is bounded to 35 seconds and one-shot reading to 300 seconds. History and delegation results are not silently truncated; an oversized data-channel message fails explicitly. The host app owns final-message persistence and should stop an active call when its presentation ends or its iOS scene backgrounds.
+
+Voice conversations require the host app's localized `NSMicrophoneUsageDescription`, and sandboxed macOS apps need the audio-input entitlement. Read-aloud mode does not capture microphone audio. The implementation uses system WebKit and AVFoundation with no new package dependency or change to the package's existing minimum platforms.
+
+`RealtimeSpeech.synthesize(_:host:apiKey:voice:)` provides microphone-free API-key reading on iOS 16+ / macOS 13+. It uses `gpt-realtime-2.1-mini` / `shimmer` over `wss://<host>/v1/realtime`, preserves the full supplied text, and returns a complete 24 kHz mono 16-bit WAV after successful generation. It rejects failed, incomplete, empty, or malformed audio, and cancels after 60 seconds. Playback and caching remain the application's responsibility.
 
 ### Audio Create Speech
 
