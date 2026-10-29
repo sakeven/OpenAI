@@ -10,6 +10,8 @@ public enum VoiceSessionError: LocalizedError {
     case microphoneDenied
     /// A call could not establish a media connection in time.
     case connectionFailed
+    /// The system ended audio access without permitting automatic resumption.
+    case audioInterrupted
     /// The reading session never completed.
     case readingTimedOut
     /// The server returned something other than a valid audio SDP answer.
@@ -28,6 +30,8 @@ public enum VoiceSessionError: LocalizedError {
             String(localized: "Allow microphone access in System Settings to start a voice conversation.")
         case .connectionFailed:
             String(localized: "Voice connection lost. Check your network and try again.")
+        case .audioInterrupted:
+            String(localized: "Voice paused")
         case .readingTimedOut:
             String(localized: "Reading did not finish in time. Please try a shorter passage.")
         case .invalidResponse:

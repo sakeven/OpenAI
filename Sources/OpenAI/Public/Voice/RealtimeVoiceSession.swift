@@ -15,6 +15,14 @@ public final class RealtimeVoiceSession: NSObject {
     public private(set) var isActive = false
     /// Reflects the actual microphone track state.
     public private(set) var isMuted = false
+    /// True while WebRTC is giving a temporarily disconnected transport time to recover.
+    public private(set) var isReconnecting = false
+    /// Reports a system audio interruption, never a user-muted or temporarily muted input track.
+    public private(set) var isInterrupted = false
+    #if os(iOS)
+    /// Owns system audio observers for exactly the current call's lifetime.
+    @ObservationIgnored private var audioSession: VoiceAudioSession?
+    #endif
     /// Current playback energy, used to distinguish listening from speaking.
     public private(set) var outputLevel = 0.0
     /// Recent measured audio levels for the native waveform.
@@ -38,7 +46,7 @@ public final class RealtimeVoiceSession: NSObject {
     @ObservationIgnored private var completion: CheckedContinuation<Void, Error>?
     /// Cancellable native HTTP handshake.
     @ObservationIgnored private var connectionTask: Task<Void, Never>?
-    /// Deadline covering SDP negotiation and opening the event channel.
+    /// Deadline covering negotiation, complete history replay, and media readiness.
     @ObservationIgnored private var startupTask: Task<Void, Never>?
     /// Bounded lifetime of a one-shot reading request.
     @ObservationIgnored private var readingTask: Task<Void, Never>?
@@ -58,8 +66,10 @@ public final class RealtimeVoiceSession: NSObject {
     @ObservationIgnored private var delegationHandler: ((VoiceDelegation) -> Void)?
     /// Publishes only authoritative service messages for the embedding application to persist.
     @ObservationIgnored private var messageHandler: ((VoiceMessage) -> Void)?
-    /// Notifies the owner after initial history replay and microphone setup are complete.
+    /// Notifies the owner after complete history replay and live media readiness, including silent input.
     @ObservationIgnored private var readyHandler: (() -> Void)?
+    /// Holds the ready callback until WebKit confirms its audio clock and tracks are running.
+    @ObservationIgnored private var awaitsMediaReadiness = false
     /// Selects the established protocol after native authentication resolves.
     @ObservationIgnored private var usesCodex = true
     /// Outstanding API function calls must all receive results before requesting another response.
@@ -69,9 +79,9 @@ public final class RealtimeVoiceSession: NSObject {
     /// Prevents replayed completion events from duplicating captions.
     @ObservationIgnored private var completedTurnIDs: Set<String> = []
 
-    /// Starts a call and suspends until it ends; cancelling its owning task releases the microphone.
+    /// Starts a call with the retained mute preference; cancelling its owning task releases the microphone.
     public func run(instructions: String, history: [VoiceMessage] = [], threadID: String = UUID().uuidString,
-             voice: String? = nil, readingText: String? = nil,
+             voice: String? = nil, readingText: String? = nil, initiallyMuted: Bool = false,
              authentication: @escaping () async throws -> VoiceSessionAuthentication,
              onDelegation: @escaping (VoiceDelegation) -> Void = { _ in },
              onMessage: @escaping (VoiceMessage) -> Void = { _ in },
@@ -89,9 +99,12 @@ public final class RealtimeVoiceSession: NSObject {
         delegationHandler = onDelegation
         messageHandler = onMessage
         readyHandler = onReady
+        awaitsMediaReadiness = false
         isActive = true
         errorMessage = nil
-        isMuted = false
+        isMuted = initiallyMuted
+        isReconnecting = false
+        isInterrupted = false
         captions = []
         messages = []
         partialIDs = [:]
@@ -108,13 +121,12 @@ public final class RealtimeVoiceSession: NSObject {
                 try Task.checkCancellation()
                 guard isActive, generation == runID else { throw CancellationError() }
                 #if os(iOS)
-                let audio = AVAudioSession.sharedInstance()
-                if readingText == nil {
-                    try audio.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
-                } else {
-                    try audio.setCategory(.playback, mode: .spokenAudio)
-                }
-                try audio.setActive(true)
+                let audio = VoiceAudioSession(
+                    onInterruption: { [weak self] in self?.isInterrupted = $0 },
+                    onResume: { [weak self] in self?.resumeMedia() },
+                    onFailure: { [weak self] in self?.finish(error: $0) })
+                audioSession = audio
+                try audio.start(reading: readingText != nil)
                 #endif
                 try await withCheckedThrowingContinuation { continuation in
                     completion = continuation
@@ -161,17 +173,33 @@ public final class RealtimeVoiceSession: NSObject {
         }
     }
 
-    /// Sends complete model text only through the current data channel, rejecting completion from a stopped call.
+    /// Waits through a temporary transport loss and rejects sends from an ended or replaced call.
     func send(_ event: [String: Any]) async throws {
         try Task.checkCancellation()
         guard isConnected, let web = webView else { throw VoiceSessionError.connectionFailed }
         do {
+            while isReconnecting, isActive, webView === web {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            guard isActive, webView === web else { throw CancellationError() }
             try await evaluateJavaScript("window.voiceSend(event)", arguments: ["event": event], in: web)
             try Task.checkCancellation()
             guard webView === web else { throw CancellationError() }
         } catch {
-            if error.localizedDescription.contains("textTooLong") { throw VoiceSessionError.textTooLong }
-            throw error
+            guard webView === web else { throw CancellationError() }
+            let failure: Error = error.localizedDescription.contains("textTooLong") ? VoiceSessionError.textTooLong
+                : error.localizedDescription.contains("disconnected") ? VoiceSessionError.connectionFailed : error
+            finish(error: failure)
+            throw failure
+        }
+    }
+
+    /// Resumes the existing media graph without replacing its tracks or clearing the user's mute choice.
+    private func resumeMedia() {
+        guard isConnected, !isInterrupted, let web = webView else { return }
+        Task {
+            do { try await evaluateJavaScript("await window.voiceResume()", arguments: [:], in: web) }
+            catch { if webView === web { finish(error: error) } }
         }
     }
 
@@ -218,14 +246,23 @@ public final class RealtimeVoiceSession: NSObject {
     /// Ends the call without presenting intentional cancellation as an error.
     public func stop() { finish(error: CancellationError()) }
 
-    /// Releases every media and native task resource before resuming the owning operation.
+    /// Preserves system interruption semantics while releasing media before resuming the owning operation.
     private func finish(error: Error? = nil) {
         guard isActive else { return }
+        let finalError: Error? = isInterrupted && error != nil && !(error is CancellationError)
+            ? VoiceSessionError.audioInterrupted : error
         isActive = false
         isConnected = false
+        isReconnecting = false
+        isInterrupted = false
         outputLevel = 0
         levels = Array(repeating: 0, count: 31)
-        if let error, !(error is CancellationError) { errorMessage = error.localizedDescription }
+        if let finalError {
+            switch finalError {
+            case is CancellationError, VoiceSessionError.audioInterrupted: break
+            default: errorMessage = finalError.localizedDescription
+            }
+        }
         startupTask?.cancel(); startupTask = nil
         connectionTask?.cancel(); connectionTask = nil
         readingTask?.cancel(); readingTask = nil
@@ -236,22 +273,26 @@ public final class RealtimeVoiceSession: NSObject {
         delegationHandler = nil
         messageHandler = nil
         readyHandler = nil
+        awaitsMediaReadiness = false
         if Self.activeSession === self { Self.activeSession = nil }
         #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        audioSession?.stop()
+        audioSession = nil
         #endif
         let continuation = completion
         completion = nil
-        if let error { continuation?.resume(throwing: error) } else { continuation?.resume() }
+        if let finalError { continuation?.resume(throwing: finalError) } else { continuation?.resume() }
     }
 
-    /// Accepts messages only from the current local main frame.
+    /// Accepts media recovery and service events only from the current local main frame.
     func receive(_ message: WKScriptMessage) {
         guard isActive, message.webView === webView, message.frameInfo.isMainFrame,
               let value = message.body as? [String: Any] else { return }
         if let failure = value["failure"] as? String {
             finish(error: failure == "permission" ? VoiceSessionError.microphoneDenied
                    : failure == "disconnected" ? VoiceSessionError.connectionFailed : VoiceSessionError.server(failure))
+        } else if let recovering = value["reconnecting"] as? Bool {
+            isReconnecting = recovering
         } else if let sdp = value["sdp"] as? String {
             connectionTask = Task { await connect(sdp: sdp) }
         } else if let event = value["event"] as? [String: Any] {
@@ -259,6 +300,20 @@ public final class RealtimeVoiceSession: NSObject {
         } else if value["finished"] as? Bool == true, readingText != nil {
             finish()
         } else if let input = value["inputLevel"] as? Double, let output = value["outputLevel"] as? Double {
+            // Clear setup interruptions before exposing readiness so the UI never waits for audible speech.
+            if value["mediaReady"] as? Bool == true {
+                if isInterrupted {
+                    isInterrupted = false
+                    #if os(iOS)
+                    audioSession?.mediaDidResume()
+                    #endif
+                }
+                if awaitsMediaReadiness {
+                    awaitsMediaReadiness = false
+                    startupTask?.cancel(); startupTask = nil
+                    readyHandler?()
+                }
+            }
             outputLevel = output
             levels.removeFirst()
             levels.append(min(1, max(isMuted ? 0 : input, output) * 8))
@@ -289,14 +344,14 @@ public final class RealtimeVoiceSession: NSObject {
         } catch { if webView === web { finish(error: error) } }
     }
 
-    /// Updates session and caption state while passing client delegation requests to the owner.
+    /// Replays history before applying the retained mute state and accepting new speech or tool results.
     func handle(_ event: [String: Any]) {
         switch event["type"] as? String {
         case "session.started", "session.created":
             guard !isConnected else { return }
             isConnected = true
             connectedAt = Date()
-            startupTask?.cancel(); startupTask = nil
+            if readingText != nil { startupTask?.cancel(); startupTask = nil }
             readingTask = Task { [weak self] in
                 guard let self, let web = webView else { return }
                 do {
@@ -309,8 +364,8 @@ public final class RealtimeVoiceSession: NSObject {
                         try await Task.sleep(for: .seconds(300))
                         if webView === web { finish(error: VoiceSessionError.readingTimedOut) }
                     } else {
-                        try await evaluateJavaScript("window.voiceMute(false)", arguments: [:], in: web)
-                        if webView === web { readyHandler?() }
+                        try await evaluateJavaScript("window.voiceMute(muted)", arguments: ["muted": isMuted], in: web)
+                        if webView === web { awaitsMediaReadiness = true }
                     }
                 } catch is CancellationError {} catch { if webView === web { finish(error: error) } }
             }
