@@ -58,10 +58,10 @@ enum LiveVoiceProtocol {
     }
 
     /// Splits oversized updates without losing text; UTF-8 bytes conservatively bound the byte-token budget.
-    static func contextEvents(_ text: String, delegationID: String? = nil, usesCodex: Bool) -> [[String: Any]] {
+    static func contextEvents(_ text: String, delegationID: String? = nil, kind: VoiceContextKind = .spoken, usesCodex: Bool) -> [[String: Any]] {
         // The server limits each appended text to 500 tokens. Leave room for part instructions,
         // and split at scalar boundaries so Chinese, emoji and combining marks round-trip intact.
-        guard text.utf8.count > 500 else { return [context(text, delegationID: delegationID, usesCodex: usesCodex)] }
+        guard text.utf8.count > 500 else { return [context(text, delegationID: delegationID, kind: kind, usesCodex: usesCodex)] }
         var parts: [String] = []
         var part = ""
         var byteCount = 0
@@ -80,20 +80,22 @@ enum LiveVoiceProtocol {
             let direction = index == parts.count - 1
                 ? "(final); now use the complete text."
                 : "; wait for the final part."
-            return context("Text part \(index + 1)/\(parts.count) \(direction)\n\(part)", delegationID: delegationID, usesCodex: usesCodex)
+            return context("Text part \(index + 1)/\(parts.count) \(direction)\n\(part)", delegationID: delegationID,
+                           kind: index == parts.count - 1 ? kind : .background, usesCodex: usesCodex)
         }
     }
 
-    /// Encodes the same speakable update with the selected service’s task identity and content shape.
-    private static func context(_ text: String, delegationID: String?, usesCodex: Bool) -> [String: Any] {
+    /// Maps background facts and spoken results to the verified event shape of each service.
+    private static func context(_ text: String, delegationID: String?, kind: VoiceContextKind, usesCodex: Bool) -> [String: Any] {
         if !usesCodex {
-            return ["type": "session.commentary.append", "event_id": UUID().uuidString,
+            return ["type": kind == .spoken ? "session.commentary.append" : "session.thinking.append", "event_id": UUID().uuidString,
                     "delegation_id": delegationID as Any? ?? NSNull(), "content": text]
         }
         var event: [String: Any] = [
             "type": delegationID == nil ? "session.context.append" : "delegation.context.append",
-            "channel": "speakable", "content": [["type": "input_text", "text": text]]
+            "content": [["type": "input_text", "text": text]]
         ]
+        if kind == .spoken { event["channel"] = "speakable" }
         if let delegationID { event["delegation_item_id"] = delegationID }
         return event
     }

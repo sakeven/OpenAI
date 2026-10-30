@@ -62,9 +62,10 @@ final class VoiceProtocolTests: XCTestCase {
                         if codex {
                             XCTAssertEqual(object["type"] as? String, delegationID == nil ? "session.context.append" : "delegation.context.append")
                             XCTAssertEqual(object["delegation_item_id"] as? String, delegationID)
+                            XCTAssertEqual(object["channel"] as? String, index == events.count - 1 ? "speakable" : nil)
                             payload = try XCTUnwrap((object["content"] as? [[String: Any]])?.first?["text"] as? String)
                         } else {
-                            XCTAssertEqual(object["type"] as? String, "session.commentary.append")
+                            XCTAssertEqual(object["type"] as? String, index == events.count - 1 ? "session.commentary.append" : "session.thinking.append")
                             XCTAssertEqual(object["delegation_id"] as? String, delegationID)
                             if delegationID == nil { XCTAssertTrue(object["delegation_id"] is NSNull) }
                             payload = try XCTUnwrap(object["content"] as? String)
@@ -78,6 +79,19 @@ final class VoiceProtocolTests: XCTestCase {
                         }
                     }
                     XCTAssertEqual(Array(restored.utf8), Array(text.utf8))
+                }
+            }
+        }
+    }
+
+    /// Background facts never select a speech channel, including every chunk of an oversized update.
+    func testBackgroundContextDoesNotRequestSpeech() throws {
+        for codex in [false, true] {
+            for text in ["Lookup in progress.", String(repeating: "完整背景🙂", count: 500)] {
+                let events = LiveVoiceProtocol.contextEvents(text, kind: .background, usesCodex: codex)
+                for event in events {
+                    XCTAssertEqual(event["type"] as? String, codex ? "session.context.append" : "session.thinking.append")
+                    XCTAssertNil(event["channel"])
                 }
             }
         }

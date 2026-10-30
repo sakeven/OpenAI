@@ -210,17 +210,17 @@ public final class LiveVoiceSession: NSObject {
 
     /// Returns a complete application result through the shared client-delegation path.
     public func respond(to request: VoiceDelegation, text: String) async throws {
-        try await sendContext(text, delegationID: request.id)
+        try await sendContext(text, delegationID: request.id, kind: .spoken)
     }
 
-    /// Supplies a full application update after reconnection without reusing an old delegation ID.
-    public func provideContext(_ text: String) async throws {
-        try await sendContext(text)
+    /// Supplies background facts by default; select spoken for a result the user should hear after reconnection.
+    public func provideContext(_ text: String, kind: VoiceContextKind = .background) async throws {
+        try await sendContext(text, kind: kind)
     }
 
     /// Sends ordered, bounded updates for task replies, resumed results and reading alike.
-    private func sendContext(_ text: String, delegationID: String? = nil) async throws {
-        for event in LiveVoiceProtocol.contextEvents(text, delegationID: delegationID, usesCodex: usesCodex) {
+    private func sendContext(_ text: String, delegationID: String? = nil, kind: VoiceContextKind) async throws {
+        for event in LiveVoiceProtocol.contextEvents(text, delegationID: delegationID, kind: kind, usesCodex: usesCodex) {
             try await send(event)
         }
     }
@@ -352,7 +352,7 @@ public final class LiveVoiceSession: NSObject {
                 guard let self, let web = webView else { return }
                 do {
                     if let readingText {
-                        try await sendContext(readingText)
+                        try await sendContext(readingText, kind: .spoken)
                         try await Task.sleep(for: .seconds(300))
                         if webView === web { finish(error: VoiceSessionError.readingTimedOut) }
                     } else {
