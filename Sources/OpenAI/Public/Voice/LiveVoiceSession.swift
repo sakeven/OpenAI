@@ -58,9 +58,9 @@ public final class LiveVoiceSession: NSObject {
     @ObservationIgnored private var readingTask: Task<Void, Never>?
     /// Credentials refreshed in Swift immediately before the handshake.
     @ObservationIgnored private var authentication: (() async throws -> VoiceSessionAuthentication)?
-    /// Prompt and existing full text conversation sent during call creation.
+    /// Trusted instructions plus an explicit archive notice when startup history is bounded.
     @ObservationIgnored private var instructions = ""
-    /// Complete prior chat messages, never a truncated note-body preview.
+    /// Selected complete prior messages, never a shortened message or note-body preview.
     @ObservationIgnored private var history: [[String: Any]] = []
     /// Identity shared with the current native chat.
     @ObservationIgnored private var threadID = ""
@@ -89,19 +89,21 @@ public final class LiveVoiceSession: NSObject {
     /// A repeated delegation event must not start duplicate application work.
     @ObservationIgnored private var seenDelegations: Set<String> = []
 
-    /// Starts a call with the retained mute preference; cancelling its owning task releases the microphone.
-    public func run(instructions: String, history: [VoiceMessage] = [], threadID: String = UUID().uuidString,
+    /// Starts with bounded whole-message history; oversized history requires a host-written full archive path.
+    public func run(instructions: String, history: [VoiceMessage] = [], historyArchivePath: String? = nil,
+             threadID: String = UUID().uuidString,
              voice: String? = nil, readingText: String? = nil, initiallyMuted: Bool = false,
              authentication: @escaping () async throws -> VoiceSessionAuthentication,
              onDelegation: @escaping (VoiceDelegation) -> Void = { _ in },
              onMessage: @escaping (VoiceMessage) -> Void = { _ in },
              onReady: @escaping () -> Void = {}) async throws {
+        let prepared = try LiveVoiceHistory.prepare(history, archivePath: historyArchivePath)
         let runID = UUID()
         Self.activeSession?.stop()
         generation = runID
         Self.activeSession = self
-        self.instructions = instructions
-        self.history = history.map(\.wireValue)
+        self.instructions = instructions + prepared.notice
+        self.history = prepared.messages.map(\.wireValue)
         self.threadID = threadID
         self.readingText = readingText
         self.voice = voice
