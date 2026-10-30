@@ -35,8 +35,12 @@ public final class LiveVoiceSession: NSObject {
     private var transcript = LiveVoiceTranscript()
     /// Start time of the connected session for the elapsed-time display.
     public private(set) var connectedAt: Date?
-    /// Terminal failure displayed by the native controls.
+    /// Latest recoverable service notice or terminal failure displayed by the native controls.
     public private(set) var errorMessage: String?
+    /// Retains nullable service diagnostics separately from connection and audio state.
+    public private(set) var serviceError: VoiceServiceError?
+    /// Public Live sends wait for the matching context acknowledgment or rejection.
+    @ObservationIgnored private let commands = LiveVoiceCommands()
     /// Prevents two chat windows from capturing the microphone simultaneously.
     private static weak var activeSession: LiveVoiceSession?
     /// Identifies this attempt so a cancelled predecessor cannot close a retry.
@@ -108,6 +112,7 @@ public final class LiveVoiceSession: NSObject {
         awaitsMediaReadiness = false
         isActive = true
         errorMessage = nil
+        serviceError = nil
         isMuted = initiallyMuted
         isReconnecting = false
         isInterrupted = false
@@ -192,8 +197,12 @@ public final class LiveVoiceSession: NSObject {
             guard webView === web else { throw CancellationError() }
         } catch {
             guard webView === web else { throw CancellationError() }
-            let failure: Error = error.localizedDescription.contains("textTooLong") ? VoiceSessionError.textTooLong
-                : error.localizedDescription.contains("disconnected") ? VoiceSessionError.connectionFailed : error
+            if error is CancellationError { throw error }
+            if error.localizedDescription.contains("textTooLong") {
+                errorMessage = VoiceSessionError.textTooLong.localizedDescription
+                throw VoiceSessionError.textTooLong
+            }
+            let failure: Error = error.localizedDescription.contains("disconnected") ? VoiceSessionError.connectionFailed : error
             finish(error: failure)
             throw failure
         }
@@ -221,7 +230,11 @@ public final class LiveVoiceSession: NSObject {
     /// Sends ordered, bounded updates for task replies, resumed results and reading alike.
     private func sendContext(_ text: String, delegationID: String? = nil, kind: VoiceContextKind) async throws {
         for event in LiveVoiceProtocol.contextEvents(text, delegationID: delegationID, kind: kind, usesCodex: usesCodex) {
-            try await send(event)
+            if !usesCodex, let id = event["event_id"] as? String {
+                try await commands.send(id: id) { try await self.send(event) }
+            } else {
+                try await send(event)
+            }
         }
     }
 
@@ -246,6 +259,7 @@ public final class LiveVoiceSession: NSObject {
         let finalError: Error? = isInterrupted && error != nil && !(error is CancellationError)
             ? VoiceSessionError.audioInterrupted : error
         isActive = false
+        commands.finish(error: finalError ?? CancellationError())
         publishMessages()
         isConnected = false
         isReconnecting = false
@@ -377,9 +391,20 @@ public final class LiveVoiceSession: NSObject {
             transcript.apply(event)
             publishMessages()
         case "error":
-            let error = event["error"] as? [String: Any]
-            finish(error: VoiceSessionError.server(error?["message"] as? String ?? String(localized: "The voice service returned an invalid response.")))
-        case "session.closed": finish()
+            let failure = VoiceServiceError(event: event)
+            serviceError = failure
+            errorMessage = failure.message
+            if let id = failure.clientEventID { commands.resolve(id: id, result: .failure(failure)) }
+            if !isConnected { finish(error: failure) }
+        case "session.thinking.appended", "session.commentary.appended", "session.instructions.appended":
+            if let id = event["client_event_id"] as? String, commands.resolve(id: id, result: .success(())) {
+                serviceError = nil
+                errorMessage = nil
+            }
+        case "session.closed":
+            let reason = event["reason"] as? String
+            finish(error: reason == "connection_lost" ? VoiceSessionError.connectionFailed
+                   : reason == "content" ? serviceError : nil)
         default: break
         }
         if let request = LiveVoiceProtocol.delegation(from: event), seenDelegations.insert(request.id).inserted {
