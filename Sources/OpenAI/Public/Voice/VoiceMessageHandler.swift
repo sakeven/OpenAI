@@ -5,9 +5,9 @@ import WebKit
 @available(iOS 17.0, macOS 14.0, *)
 @MainActor final class VoiceMessageHandler: NSObject, WKScriptMessageHandler {
     /// The session owns its WebView, so the reverse reference must be weak.
-    weak var session: RealtimeVoiceSession?
+    weak var session: LiveVoiceSession?
     /// Attaches the bridge to one session.
-    init(session: RealtimeVoiceSession) { self.session = session }
+    init(session: LiveVoiceSession) { self.session = session }
     /// Forwards messages to the session's origin and identity checks.
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         session?.receive(message)

@@ -6,7 +6,7 @@ import WebKit
 /// Owns one cancellable WebRTC call and its native presentation state.
 @available(iOS 17.0, macOS 14.0, *)
 @MainActor @Observable
-public final class RealtimeVoiceSession: NSObject {
+public final class LiveVoiceSession: NSObject {
     /// The currently mounted local media document, retained only while a call is active.
     public private(set) var webView: WKWebView?
     /// Indicates an established voice session rather than a merely completed HTTP request.
@@ -27,16 +27,18 @@ public final class RealtimeVoiceSession: NSObject {
     public private(set) var outputLevel = 0.0
     /// Recent measured audio levels for the native waveform.
     public private(set) var levels = Array(repeating: 0.0, count: 31)
-    /// Ephemeral live captions; partial display text is never emitted as a completed message.
-    public private(set) var captions: [VoiceCaption] = []
-    /// Service-confirmed conversation messages, distinct from the live caption stream.
-    public private(set) var messages: [VoiceMessage] = []
+    /// Live captions preserve the service's completion semantics for each protocol.
+    public var captions: [VoiceCaption] { transcript.captions }
+    /// Codex final turns or public Live transcript snapshots, separate from delegated text results.
+    public var messages: [VoiceMessage] { transcript.messages }
+    /// Shared transcript reconciliation observed by both native voice surfaces.
+    private var transcript = LiveVoiceTranscript()
     /// Start time of the connected session for the elapsed-time display.
     public private(set) var connectedAt: Date?
     /// Terminal failure displayed by the native controls.
     public private(set) var errorMessage: String?
     /// Prevents two chat windows from capturing the microphone simultaneously.
-    private static weak var activeSession: RealtimeVoiceSession?
+    private static weak var activeSession: LiveVoiceSession?
     /// Identifies this attempt so a cancelled predecessor cannot close a retry.
     @ObservationIgnored private var generation = UUID()
     /// Creates a disconnected call, without requesting permission or starting media.
@@ -64,7 +66,7 @@ public final class RealtimeVoiceSession: NSObject {
     @ObservationIgnored private var readingText: String?
     /// Routes delegation events to the existing AI Chat tools.
     @ObservationIgnored private var delegationHandler: ((VoiceDelegation) -> Void)?
-    /// Publishes only authoritative service messages for the embedding application to persist.
+    /// Publishes received transcript snapshots or final turns for the embedding application to upsert.
     @ObservationIgnored private var messageHandler: ((VoiceMessage) -> Void)?
     /// Notifies the owner after complete history replay and live media readiness, including silent input.
     @ObservationIgnored private var readyHandler: (() -> Void)?
@@ -72,12 +74,16 @@ public final class RealtimeVoiceSession: NSObject {
     @ObservationIgnored private var awaitsMediaReadiness = false
     /// Selects the established protocol after native authentication resolves.
     @ObservationIgnored private var usesCodex = true
-    /// Outstanding API function calls must all receive results before requesting another response.
-    @ObservationIgnored private var pendingCallIDs: Set<String> = []
-    /// Partial caption identities for independent user and assistant turns.
-    @ObservationIgnored private var partialIDs: [String: String] = [:]
-    /// Prevents replayed completion events from duplicating captions.
-    @ObservationIgnored private var completedTurnIDs: Set<String> = []
+    /// Last published text avoids repeatedly persisting unchanged transcript rows.
+    @ObservationIgnored private var publishedMessages: [String: VoiceMessage] = [:]
+    /// Throttles public transcript persistence without delaying live caption display.
+    @ObservationIgnored private var publicationTask: Task<Void, Never>?
+    /// Coalesces input fragments before resolving metadata-only public delegations.
+    @ObservationIgnored private var delegationTask: Task<Void, Never>?
+    /// Explicit public delegations wait for matching transcript context, never execute from speech alone.
+    @ObservationIgnored private var pendingDelegations: [(id: String, offset: Int)] = []
+    /// A repeated delegation event must not start duplicate application work.
+    @ObservationIgnored private var seenDelegations: Set<String> = []
 
     /// Starts a call with the retained mute preference; cancelling its owning task releases the microphone.
     public func run(instructions: String, history: [VoiceMessage] = [], threadID: String = UUID().uuidString,
@@ -105,11 +111,10 @@ public final class RealtimeVoiceSession: NSObject {
         isMuted = initiallyMuted
         isReconnecting = false
         isInterrupted = false
-        captions = []
-        messages = []
-        partialIDs = [:]
-        completedTurnIDs = []
-        pendingCallIDs = []
+        transcript = LiveVoiceTranscript()
+        publishedMessages = [:]
+        pendingDelegations = []
+        seenDelegations = []
         connectedAt = nil
         try await withTaskCancellationHandler {
             do {
@@ -156,7 +161,7 @@ public final class RealtimeVoiceSession: NSObject {
         web.navigationDelegate = self
         web.uiDelegate = self
         webView = web
-        web.loadHTMLString(CodexVoiceWebDocument.html, baseURL: URL(string: "https://localhost"))
+        web.loadHTMLString(LiveVoiceWebDocument.html, baseURL: URL(string: "https://localhost"))
         startupTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(35)) } catch { return }
             self?.finish(error: VoiceSessionError.connectionFailed)
@@ -203,30 +208,19 @@ public final class RealtimeVoiceSession: NSObject {
         }
     }
 
-    /// Returns a complete application result using the selected backend's event dialect.
+    /// Returns a complete application result through the shared client-delegation path.
     public func respond(to request: VoiceDelegation, text: String) async throws {
-        if usesCodex {
-            try await sendCodexContext(text, delegationID: request.id)
-        } else {
-            try await send(RealtimeVoiceProtocol.result(text, id: request.id))
-            pendingCallIDs.remove(request.id)
-            if pendingCallIDs.isEmpty { try await send(["type": "response.create"]) }
-        }
+        try await sendContext(text, delegationID: request.id)
     }
 
-    /// Supplies a full application update after reconnection, without reusing a delegation ID from the old call.
+    /// Supplies a full application update after reconnection without reusing an old delegation ID.
     public func provideContext(_ text: String) async throws {
-        if usesCodex {
-            try await sendCodexContext(text)
-        } else {
-            try await send(["type": "conversation.item.create",
-                            "item": VoiceMessage(role: .user, text: text).wireValue])
-        }
+        try await sendContext(text)
     }
 
     /// Sends ordered, bounded updates for task replies, resumed results and reading alike.
-    private func sendCodexContext(_ text: String, delegationID: String? = nil) async throws {
-        for event in CodexVoiceProtocol.contextEvents(text, delegationID: delegationID) {
+    private func sendContext(_ text: String, delegationID: String? = nil) async throws {
+        for event in LiveVoiceProtocol.contextEvents(text, delegationID: delegationID, usesCodex: usesCodex) {
             try await send(event)
         }
     }
@@ -252,6 +246,7 @@ public final class RealtimeVoiceSession: NSObject {
         let finalError: Error? = isInterrupted && error != nil && !(error is CancellationError)
             ? VoiceSessionError.audioInterrupted : error
         isActive = false
+        publishMessages()
         isConnected = false
         isReconnecting = false
         isInterrupted = false
@@ -266,8 +261,16 @@ public final class RealtimeVoiceSession: NSObject {
         startupTask?.cancel(); startupTask = nil
         connectionTask?.cancel(); connectionTask = nil
         readingTask?.cancel(); readingTask = nil
-        webView?.evaluateJavaScript("window.voiceClose()", completionHandler: nil)
-        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "voice")
+        publicationTask?.cancel(); publicationTask = nil
+        delegationTask?.cancel(); delegationTask = nil
+        pendingDelegations = []
+        // Retain this document until its bounded close handshake finishes; a new call owns a different web view.
+        if let web = webView {
+            Task {
+                try? await evaluateJavaScript("await window.voiceClose()", arguments: [:], in: web)
+                web.configuration.userContentController.removeScriptMessageHandler(forName: "voice")
+            }
+        }
         webView = nil
         authentication = nil
         delegationHandler = nil
@@ -326,28 +329,21 @@ public final class RealtimeVoiceSession: NSObject {
         do {
             let auth = try await authentication()
             try Task.checkCancellation()
-            let request: URLRequest
             usesCodex = auth.isCodex
-            switch auth {
-            case .codexOAuth(let token, let accountID):
-                request = try CodexVoiceProtocol.request(sdp: sdp, accessToken: token, accountID: accountID,
-                    instructions: instructions, history: history, threadID: threadID, voice: voice ?? "cove")
-            case .apiKey(let token, let host):
-                request = try RealtimeVoiceProtocol.request(sdp: sdp, token: token, host: host, instructions: instructions, voice: voice ?? "marin")
-            }
-            try await evaluateJavaScript("window.voiceIsCodex = codex", arguments: ["codex": usesCodex], in: web)
+            let request = try LiveVoiceProtocol.request(sdp: sdp, authentication: auth,
+                instructions: instructions, history: history, threadID: threadID, voice: voice)
             let (data, response) = try await URLSession.shared.data(for: request)
             try Task.checkCancellation()
-            let answer = try CodexVoiceProtocol.answer(data: data, response: response)
+            let answer = try LiveVoiceProtocol.answer(data: data, response: response, usesCodex: usesCodex)
             guard isActive, webView === web else { return }
             try await evaluateJavaScript("await window.voiceAnswer(sdp)", arguments: ["sdp": answer], in: web)
         } catch { if webView === web { finish(error: error) } }
     }
 
-    /// Replays history before applying the retained mute state and accepting new speech or tool results.
+    /// Starts media after server initialization and normalizes both services into shared transcript/task state.
     func handle(_ event: [String: Any]) {
         switch event["type"] as? String {
-        case "session.started", "session.created":
+        case "session.started":
             guard !isConnected else { return }
             isConnected = true
             connectedAt = Date()
@@ -355,12 +351,8 @@ public final class RealtimeVoiceSession: NSObject {
             readingTask = Task { [weak self] in
                 guard let self, let web = webView else { return }
                 do {
-                    if !usesCodex {
-                        for event in RealtimeVoiceProtocol.historyEvents(history) { try await send(event) }
-                    }
                     if let readingText {
-                        if usesCodex { try await sendCodexContext(readingText) }
-                        else { try await send(RealtimeVoiceProtocol.reading(readingText)) }
+                        try await sendContext(readingText)
                         try await Task.sleep(for: .seconds(300))
                         if webView === web { finish(error: VoiceSessionError.readingTimedOut) }
                     } else {
@@ -369,90 +361,67 @@ public final class RealtimeVoiceSession: NSObject {
                     }
                 } catch is CancellationError {} catch { if webView === web { finish(error: error) } }
             }
-        case "input_audio_buffer.speech_started":
-            // Reserve the user's position before slower transcription completes after an assistant reply.
-            if let id = event["item_id"] as? String {
-                updateCaption(role: "user", text: "", complete: false, itemID: id)
+        case "session.input_transcript.delta", "session.output_transcript.delta":
+            transcript.apply(event)
+            if publicationTask == nil {
+                publicationTask = Task { [weak self] in
+                    do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                    self?.publishMessages()
+                    self?.publicationTask = nil
+                }
             }
-        case "conversation.item.input_audio_transcription.delta", "response.output_audio_transcript.delta":
-            if let id = event["item_id"] as? String, let text = event["delta"] as? String {
-                let role = event["type"] as? String == "conversation.item.input_audio_transcription.delta" ? "user" : "assistant"
-                updateCaption(role: role, text: text, complete: false, itemID: id)
+            if event["type"] as? String == "session.input_transcript.delta", !pendingDelegations.isEmpty {
+                scheduleDelegations()
             }
-        case "conversation.item.input_audio_transcription.completed", "response.output_audio_transcript.done":
-            if let id = event["item_id"] as? String, let text = event["transcript"] as? String {
-                let role = event["type"] as? String == "conversation.item.input_audio_transcription.completed" ? "user" : "assistant"
-                updateCaption(role: role, text: text, complete: true, itemID: id)
-                if role == "user" { commitMessage(.init(id: id, role: .user, text: text)) }
-            }
-        case "conversation.item.input_audio_transcription.failed":
-            let error = event["error"] as? [String: Any]
-            finish(error: VoiceSessionError.server(error?["message"] as? String ?? String(localized: "The voice service returned an invalid response.")))
-        case "response.done":
-            do {
-                for message in RealtimeVoiceProtocol.messages(from: event) { commitMessage(message) }
-                let requests = try RealtimeVoiceProtocol.delegations(from: event)
-                pendingCallIDs.formUnion(requests.map(\.id))
-                for request in requests { delegationHandler?(request) }
-            } catch { finish(error: error) }
-        case "input_transcript.added", "output_transcript.added":
-            if let item = event["item"] as? [String: Any], let text = item["text"] as? String {
-                let role = event["type"] as? String == "input_transcript.added" ? "user" : "assistant"
-                updateCaption(role: role, text: text, complete: false)
-            }
-        case "turn.done":
-            if let turn = event["turn"] as? [String: Any], let id = turn["id"] as? String,
-               let role = turn["role"] as? String, ["user", "assistant"].contains(role),
-               let text = turn["transcript"] as? String, completedTurnIDs.insert(id).inserted {
-                let messageID = partialIDs[role] ?? id
-                updateCaption(role: role, text: text, complete: true, itemID: messageID)
-                partialIDs[role] = nil
-                commitMessage(.init(id: messageID, role: role == "user" ? .user : .assistant, text: text))
-            }
+        case "input_transcript.added", "output_transcript.added", "turn.done":
+            transcript.apply(event)
+            publishMessages()
         case "error":
             let error = event["error"] as? [String: Any]
             finish(error: VoiceSessionError.server(error?["message"] as? String ?? String(localized: "The voice service returned an invalid response.")))
         case "session.closed": finish()
         default: break
         }
-        if let request = CodexVoiceProtocol.delegation(from: event) {
-            delegationHandler?(VoiceDelegation(id: request.id, text: request.text))
+        if let request = LiveVoiceProtocol.delegation(from: event), seenDelegations.insert(request.id).inserted {
+            if let text = request.text {
+                delegationHandler?(VoiceDelegation(id: request.id, text: text,
+                    userMessageID: captions.last(where: { $0.role == "user" })?.id))
+            } else if let offset = request.offset {
+                pendingDelegations.append((request.id, offset))
+                scheduleDelegations()
+            }
         }
     }
 
-    /// Commits complete service messages in speech order without reading text back from the caption view.
-    private func commitMessage(_ message: VoiceMessage) {
-        guard !message.text.isEmpty else { return }
-        if let index = messages.firstIndex(where: { $0.id == message.id }) {
-            guard messages[index] != message else { return }
-            messages[index] = message
-        } else if let position = captions.firstIndex(where: { $0.id == message.id }),
-                  let next = messages.firstIndex(where: { item in
-                      captions.firstIndex(where: { $0.id == item.id }).map { $0 > position } ?? false
-                  }) {
-            messages.insert(message, at: next)
-        } else {
-            messages.append(message)
+    /// Publishes changed rows only, including the last received public snapshot when a call stops.
+    private func publishMessages() {
+        for message in messages where publishedMessages[message.id] != message {
+            publishedMessages[message.id] = message
+            messageHandler?(message)
         }
-        messageHandler?(message)
     }
 
-    /// Accumulates partial words, then replaces them with the complete authoritative turn text.
-    private func updateCaption(role: String, text: String, complete: Bool, itemID: String? = nil) {
-        let id = itemID ?? partialIDs[role] ?? UUID().uuidString
-        if let index = captions.firstIndex(where: { $0.id == id }) {
-            guard !captions[index].isComplete else { return }
-            captions[index].text = complete ? text : captions[index].text + text
-            captions[index].isComplete = complete
-        } else {
-            captions.append(.init(id: id, role: role, text: text, isComplete: complete))
+    /// Coalescing is a scheduling delay, not a claim that Live supplied a completed utterance.
+    private func scheduleDelegations() {
+        delegationTask?.cancel()
+        delegationTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
+            guard let self, isActive else { return }
+            publishMessages()
+            let requests = pendingDelegations.compactMap { pending in
+                self.transcript.delegation(id: pending.id, offset: pending.offset)
+            }
+            let readyIDs = Set(requests.map(\.id))
+            pendingDelegations.removeAll { readyIDs.contains($0.id) }
+            delegationTask = nil
+            // Remove queued work before calling the host, which may synchronously stop the session.
+            for request in requests { delegationHandler?(request) }
         }
-        if itemID == nil { partialIDs[role] = complete ? nil : id }
     }
 }
 
 @available(iOS 17.0, macOS 14.0, *)
-extension RealtimeVoiceSession: WKNavigationDelegate, WKUIDelegate {
+extension LiveVoiceSession: WKNavigationDelegate, WKUIDelegate {
     /// Starts WebRTC after the local document is loaded and mounted by SwiftUI.
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard isActive, self.webView === webView else { return }

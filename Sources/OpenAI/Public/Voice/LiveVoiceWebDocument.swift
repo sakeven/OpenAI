@@ -1,16 +1,16 @@
 import Foundation
 
-/// A local WebRTC media bridge; native Swift owns OAuth and all application operations.
-enum CodexVoiceWebDocument {
+/// A local WebRTC media bridge; native Swift owns authentication and all application operations.
+enum LiveVoiceWebDocument {
     /// Bundled HTML only: no remote scripts, navigation, credential storage, or camera capture.
     static let html = #"""
     <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; media-src blob:">
     <style>html,body{margin:0;background:transparent}</style></head><body><script>
-    let peer, channel, input, audio, context, oscillator, meter, inputMeter, outputMeter, disconnectTimer;
-    let closed = false, reading = false, outputBegan = 0, lastSound = 0, finishAfter = null;
+    let peer, channel, input, audio, context, oscillator, meter, inputMeter, outputMeter, disconnectTimer, iceGatheringDone;
+    let closed = false, closing = false, serverClosed = false, closePromise, closeAcknowledged, reading = false, outputBegan = 0, lastSound = 0, finishAfter = null;
     let microphoneReady = false, microphoneMuted = true, previousAudioTime = 0;
-    const post = value => { if (!closed) window.webkit.messageHandlers.voice.postMessage(value); };
+    const post = value => { if (!closed && !closing) window.webkit.messageHandlers.voice.postMessage(value); };
     // Report media failures without exposing the SDP or the user's transcript to a log.
     const fail = error => post({failure: error.name === 'NotAllowedError' ? 'permission' : String(error.message || error)});
     window.voiceSend = event => {
@@ -20,19 +20,32 @@ enum CodexVoiceWebDocument {
         if (limit && new TextEncoder().encode(json).length > limit) throw new Error('textTooLong');
         channel.send(json);
     };
-    // Stop both tracks and audio graphs, including the silent sender used by reading.
+    // Release local capture immediately; retain the data channel long enough to acknowledge session.close.
     window.voiceClose = () => {
-        if (closed) return;
-        try { if (window.voiceIsCodex) window.voiceSend({type:'session.close'}); } catch (_) {}
-        closed = true;
+        if (closePromise) return closePromise;
+        closing = true;
+        iceGatheringDone?.();
         clearInterval(meter);
         clearTimeout(disconnectTimer);
         if (input) input.getTracks().forEach(track => track.stop());
         if (oscillator) oscillator.stop();
         if (audio) { audio.pause(); audio.srcObject = null; }
-        if (channel) channel.close();
-        if (peer) { peer.getReceivers().forEach(receiver => receiver.track.stop()); peer.close(); }
         if (context) context.close();
+        closePromise = new Promise(resolve => {
+            let timeout;
+            const release = () => {
+                if (closed) return;
+                closed = true; clearTimeout(timeout);
+                if (channel) channel.close();
+                if (peer) { peer.getReceivers().forEach(receiver => receiver.track.stop()); peer.close(); }
+                resolve();
+            };
+            closeAcknowledged = release;
+            timeout = setTimeout(release, 3000);
+            if (serverClosed) release();
+            else { try { window.voiceSend({type:'session.close'}); } catch (_) { release(); } }
+        });
+        return closePromise;
     };
     // The first call follows complete history replay; later calls retain the user's mute preference.
     window.voiceMute = muted => {
@@ -41,7 +54,7 @@ enum CodexVoiceWebDocument {
     };
     // Resume the current graph after a system interruption without silently unmuting the user.
     window.voiceResume = async () => {
-        if (closed) return;
+        if (closed || closing) return;
         if (context && context.state !== 'running') await context.resume();
         if (audio && audio.paused) await audio.play();
     };
@@ -59,10 +72,10 @@ enum CodexVoiceWebDocument {
     window.voiceStart = async microphone => {
         reading = !microphone;
         context = new AudioContext(); await context.resume();
-        if (closed) return;
+        if (closed || closing) return;
         if (microphone) {
             input = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
-            if (closed) { input.getTracks().forEach(track => track.stop()); return; }
+            if (closed || closing) { input.getTracks().forEach(track => track.stop()); return; }
             inputMeter = analyser(input);
             input.getAudioTracks().forEach(track => {
                 track.enabled = false;
@@ -102,7 +115,7 @@ enum CodexVoiceWebDocument {
             outputMeter = analyser(stream);
         };
         channel = peer.createDataChannel('oai-events');
-        channel.onclose = () => post({failure:'disconnected'});
+        channel.onclose = () => { if (closing) closeAcknowledged?.(); else post({failure:'disconnected'}); };
         channel.onerror = () => post({failure:'disconnected'});
         channel.onmessage = message => {
             try {
@@ -112,7 +125,7 @@ enum CodexVoiceWebDocument {
                     const duration = Math.max(0, event.turn.end_ms - event.turn.start_ms);
                     finishAfter = Math.max(performance.now(), (outputBegan || performance.now()) + duration);
                 }
-                if (reading && event.type === 'output_audio_buffer.stopped') finishAfter = performance.now();
+                if (event.type === 'session.closed') { serverClosed = true; if (closing) closeAcknowledged?.(); }
                 post({event});
             } catch (error) { fail(error); }
         };
@@ -135,9 +148,21 @@ enum CodexVoiceWebDocument {
             }
         }, 100);
         const offer = await peer.createOffer(); await peer.setLocalDescription(offer);
+        // Public Live requires the complete gathered offer; the native startup deadline bounds this wait.
+        if (closed || closing) return;
+        if (peer.iceGatheringState !== 'complete') {
+            await new Promise(resolve => {
+                iceGatheringDone = () => { peer.onicegatheringstatechange = null; resolve(); };
+                peer.onicegatheringstatechange = () => {
+                    if (peer.iceGatheringState === 'complete') {
+                        iceGatheringDone(); iceGatheringDone = null;
+                    }
+                };
+            });
+        }
         post({sdp:peer.localDescription.sdp});
     };
-    window.voiceAnswer = async sdp => { if (!closed) await peer.setRemoteDescription({type:'answer',sdp}); };
+    window.voiceAnswer = async sdp => { if (!closed && !closing) await peer.setRemoteDescription({type:'answer',sdp}); };
     </script></body></html>
     """#
 }

@@ -29,7 +29,7 @@ This repository contains Swift community-maintained implementation over [OpenAI]
     - [Create Image Edit](#create-image-edit)
     - [Create Image Variation](#create-image-variation)
 - [Audio](#audio)
-    - [Realtime Voice](#realtime-voice)
+    - [Live Voice](#live-voice)
     - [Audio Create Speech](#audio-create-speech)
     - [Audio Transcriptions](#audio-transcriptions)
     - [Audio Translations](#audio-translations)
@@ -583,12 +583,12 @@ Transcribe audio into whatever language the audio is in.
 Translate and transcribe the audio into english.
 File uploads are currently limited to 25 MB and the following input file types are supported: mp3, mp4, mpeg, mpga, m4a, wav, and webm.
 
-### Realtime Voice
+### Live Voice
 
-`RealtimeVoiceSession` provides an observable, cancellable WebRTC session on iOS 17+ and macOS 14+. It owns the native handshake, local WebKit media document, captions, final conversation messages, audio levels, microphone mute, and application-task delegation. Mount its `webView` in a `UIViewRepresentable` / `NSViewRepresentable` while the session is active; WebKit requires an attached view for media playback. The SDK does not provide application UI or execute delegated tasks.
+`LiveVoiceSession` provides an observable, cancellable WebRTC session on iOS 17+ and macOS 14+. It owns the native handshake, local WebKit media document, captions, conversation text snapshots, audio levels, microphone mute, and application-task delegation. Mount its `webView` in a `UIViewRepresentable` / `NSViewRepresentable` while the session is active; WebKit requires an attached view for media playback. The SDK does not provide application UI or execute delegated tasks.
 
 ```swift
-let session = RealtimeVoiceSession() // MainActor
+let session = LiveVoiceSession() // MainActor
 try await session.run(
     instructions: "Speak naturally. Delegate application tasks to the client.",
     history: [VoiceMessage(role: .user, text: "Help me plan today.")],
@@ -602,17 +602,23 @@ try await session.run(
 )
 ```
 
-The API-key route uses `gpt-realtime-2.1`, voice `marin`, and `gpt-4o-mini-transcribe` input transcription via the documented multipart `POST /v1/realtime/calls` endpoint. Input transcription uses the WebRTC-compatible mini transcriber; its [announced retirement](https://developers.openai.com/api/docs/deprecations) is February 26, 2027. The newer `gpt-transcribe` [committed-turn workflow](https://developers.openai.com/api/docs/guides/realtime-transcription#transcribe-a-committed-turn) currently requires WebSocket. The optional host is a hostname, matching the SDK's existing configuration convention. It routes HTTPS signaling; WebRTC media uses the negotiated media addresses, so a WebSocket reverse proxy alone does not proxy the audio.
+The API-key route uses `gpt-live-1`, voice `marin`, native Live transcripts and client delegation through the documented JSON `POST /v1/live/sessions` endpoint. The optional host is a hostname, matching the SDK's existing configuration convention. It routes HTTPS signaling; WebRTC media uses the negotiated media addresses, so a WebSocket reverse proxy alone does not proxy the audio. The account must have access to the Live model.
 
 For an existing Codex login, return `.codexOAuth(accessToken:accountID:)` from the authentication closure. This route uses the desktop backend `https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas`, `gpt-live-1.1-codex`, voice `cove`, and the verified `0.164.0-alpha.11.1` client identity with `OpenAI-Alpha: quicksilver=v2`. It is a product backend, not the public API contract; account eligibility and backend changes affect availability. Credentials stay in native requests and never enter the web document.
 
-`captions` is ephemeral display state. Persist the `onMessage` callback or `messages` collection instead: Codex uses authoritative `turn.done`, public Realtime uses final input transcription and successful `response.done` output items. An audio-only response's canonical text is its final audio transcript; it does not imply a separate longer written answer. Caption fragments and cancelled responses are not emitted as completed messages. Stable message IDs and speech ordering allow late input transcription to be inserted before the corresponding answer. Preserve delegated agents' complete written results separately; a spoken summary must not replace them.
+Both API Key (`gpt-live-1`, `POST /v1/live/sessions`) and Codex OAuth (`gpt-live-1.1-codex`) use the same session, WebRTC document, transcript state and client-delegation result pipeline. Only authentication, HTTP payloads and service event shapes differ. Public Live receives history as `session.input` during creation; Codex uses `initial_items`. The old Realtime call and function-tool adapter have been removed. API keys stay in native Swift; custom hosts must support the Live JSON endpoint.
 
-To pause audio while application tasks continue, call `stop()` and keep those tasks and their full results in the host application. Resume with a new `run(history:...)` using the current confirmed conversation. The optional `onReady` callback fires after conversation history replay and microphone setup, when pending result updates can be sent. Use `respond(to:text:)` only for requests from the current call; use `provideContext(_:)` for complete application results carried over from an earlier connection. Public Realtime adds this context without starting an overlapping response; Codex uses `session.context.append`. Sending completion from a stopped web view is rejected, so the application can retain the result for the replacement connection. This does not resume an interrupted utterance or save partial captions. No new permission, storage format, or package dependency is required.
+`captions` is display state. Upsert `onMessage` callbacks by ID: Codex emits authoritative `turn.done` messages, while public Live has timestamped transcript deltas with no final-turn event. Public messages are cumulative received-text snapshots, published at most every 500 ms and flushed on stop. Caption grouping never implies final transcription. Preserve the delegated agent's complete written results separately from spoken summaries.
 
-Pass `voice` to select an identifier from `VoiceOption.realtime` or `VoiceOption.codex`, matching the authentication route. The Codex list was verified with the desktop wingman voice catalog on 2026-10-27; display names such as Arbor and Sol map to their actual service identifiers. The application owns persistence; each call captures its voice at startup.
+Public client delegations contain metadata, not task text. The SDK coalesces incoming speech, waits for user transcript context, then supplies the received transcript and delegation offset to `onDelegation`, retaining `userMessageID`. The host still owns tool execution and confirmations; transcript snapshots may be incomplete. Codex's explicit task text uses the same callback. Results for either backend are split at Unicode scalar boundaries to fit the 500-token append limit without truncating text.
 
-Pass `readingText` to read complete text without requesting microphone permission. The operation completes after actual audio playback finishes. Cancelling its owning task or calling `stop()` closes media and releases the web view; starting another session ends the previous session in the same process. Initial connection is bounded to 35 seconds and one-shot reading to 300 seconds. History and delegation results are not silently truncated; an oversized data-channel message fails explicitly. The host app owns final-message persistence and should stop an active call when its presentation ends or its iOS scene backgrounds.
+To pause audio while tasks continue, call `stop()` and retain those tasks and full results in the host. Resume `run(history:...)` with the current conversation. `onReady` fires after initial context and media readiness. Use `respond(to:text:)` for a current-call delegation and `provideContext(_:)` for results from an earlier connection. Public Live sends `session.commentary.append`; Codex sends its context append events. Both use the shared chunking path. `stop()` releases local capture/playback immediately and retains the transport for `session.closed`, bounded to three seconds. Disconnection can prevent confirmation of server finalization.
+
+Use `instructions` for conversation behavior, speaking style and pronunciation guidance. Terminology can guide wording in replies; the documented API does not promise input-transcript keyword biasing through this field. Full history is sent without truncation: public Live limits startup input to 128 messages / 8192 tokens, and service validation errors are surfaced. No new permission, storage format or package dependency is required.
+
+Pass `voice` to select an identifier from `VoiceOption.realtime` or `VoiceOption.codex`, matching the authentication route. The public catalog contains voices shared with the separate Realtime read-aloud API. The Codex list was verified with the desktop wingman voice catalog on 2026-10-27; display names such as Arbor and Sol map to their actual service identifiers. The application owns persistence; each call captures its voice at startup.
+
+With Codex authentication, pass `readingText` to read complete text without requesting microphone permission. The operation completes after actual audio playback finishes. Cancelling its owning task or calling `stop()` closes media and releases the web view; starting another session ends the previous session in the same process. Initial connection is bounded to 35 seconds and one-shot reading to 300 seconds. History and delegation results are not silently truncated; an oversized data-channel message fails explicitly. The host app owns transcript persistence and stops the call when its presentation ends; background audio follows the host’s existing audio-session policy.
 
 Voice conversations require the host app's localized `NSMicrophoneUsageDescription`, and sandboxed macOS apps need the audio-input entitlement. Read-aloud mode does not capture microphone audio. The implementation uses system WebKit and AVFoundation with no new package dependency or change to the package's existing minimum platforms.
 

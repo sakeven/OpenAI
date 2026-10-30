@@ -2,84 +2,73 @@
 import XCTest
 @testable import OpenAI
 
-/// Checks transcript identity and ordering independently of network, playback, and microphone permission.
+/// Checks actual wire transcripts independently of network and microphone access.
 @available(iOS 17.0, macOS 14.0, *)
 final class VoiceTranscriptTests: XCTestCase {
-    /// Slower input transcription fills its original position even if the assistant finishes first.
-    @MainActor func testLateInputTranscriptionKeepsConversationOrder() {
-        let session = RealtimeVoiceSession()
-        session.handle(["type": "input_audio_buffer.speech_started", "item_id": "user"])
-        session.handle(["type": "response.output_audio_transcript.done", "item_id": "assistant", "transcript": "Tomorrow."])
-        session.handle(["type": "conversation.item.input_audio_transcription.completed", "item_id": "user", "transcript": "When is it?"])
-        XCTAssertEqual(session.captions.map(\.id), ["user", "assistant"])
-        XCTAssertEqual(session.captions.map(\.text), ["When is it?", "Tomorrow."])
-        XCTAssertTrue(session.captions.allSatisfy(\.isComplete))
+    /// Exact fragments retain spaces and repeated words, and duplicate events do not duplicate content.
+    func testLiveDeltasRemainSnapshots() {
+        var state = LiveVoiceTranscript()
+        let first = delta("u1", "user", "Hi", 100, 200)
+        state.apply(first); state.apply(first)
+        state.apply(delta("u2", "user", " hi 🙂", 200, 500))
+        XCTAssertEqual(state.captions.map(\.text), ["Hi hi 🙂"])
+        XCTAssertEqual(state.messages.map(\.text), ["Hi hi 🙂"])
+        XCTAssertFalse(state.captions[0].isComplete)
     }
 
-    /// Authoritative completion replaces partial text and repeated completion cannot duplicate the row.
-    @MainActor func testPublicCaptionFinalizationIsIdempotent() {
-        let session = RealtimeVoiceSession()
-        session.handle(["type": "response.output_audio_transcript.delta", "item_id": "a", "delta": "partial"])
-        let full = String(repeating: "完整的语音内容🙂\n", count: 4000)
-        let done: [String: Any] = ["type": "response.output_audio_transcript.done", "item_id": "a", "transcript": full]
-        session.handle(done)
-        session.handle(done)
-        session.handle(["type": "response.output_audio_transcript.delta", "item_id": "a", "delta": "late"])
-        XCTAssertEqual(session.captions.count, 1)
-        XCTAssertEqual(session.captions.first?.text, full)
+    /// Late user captions are ordered by audio time while fragment text remains in delivery order.
+    func testLateInputAndOverlappingSpeech() {
+        var state = LiveVoiceTranscript()
+        state.apply(delta("a1", "assistant", "Tomorrow.", 1000, 2000))
+        state.apply(delta("u1", "user", "When", 100, 500))
+        state.apply(delta("u2", "user", " is it?", 500, 1100))
+        state.apply(delta("u3", "user", " Another question", 2500, 2700))
+        XCTAssertEqual(state.messages.map(\.text), ["When is it?", "Tomorrow.", " Another question"])
+        XCTAssertEqual(state.messages.map(\.id), ["u1", "a1", "u3"])
     }
 
-    /// Codex final turn identifiers deduplicate delivery without replacing the streaming row identity.
-    @MainActor func testCodexCompletionRetainsPartialIdentity() {
-        let session = RealtimeVoiceSession()
-        session.handle(["type": "input_transcript.added", "item": ["text": "Hello"]])
-        let id = session.captions.first?.id
+    /// A gap on the media timeline may split display rows but never creates an authoritative final turn.
+    func testGapsPreserveFullTextWithoutFinalizing() {
+        var state = LiveVoiceTranscript()
+        state.apply(delta("u1", "user", "First", 0, 500))
+        state.apply(delta("u2", "user", " continuation", 4000, 5000))
+        XCTAssertEqual(state.messages.map(\.text).joined(), "First continuation")
+        XCTAssertTrue(state.captions.allSatisfy { !$0.isComplete })
+    }
+
+    /// Metadata-only work waits for speech and retains the earlier user identity when newer speech arrives.
+    func testPublicDelegationIncludesContextAndOrigin() throws {
+        var state = LiveVoiceTranscript()
+        XCTAssertNil(state.delegation(id: "task", offset: 1000))
+        state.apply(delta("u1", "user", "Find Thursday's note", 100, 800))
+        state.apply(delta("a1", "assistant", "Checking.", 1200, 1800))
+        state.apply(delta("u2", "user", " Friday, actually.", 2500, 2800))
+        let request = try XCTUnwrap(state.delegation(id: "task", offset: 1000))
+        XCTAssertEqual(request.userMessageID, "u1")
+        XCTAssertTrue(request.text.contains("Friday, actually."))
+        XCTAssertTrue(request.text.contains("not guaranteed complete turns"))
+        XCTAssertEqual(request.id, "task")
+    }
+
+    /// Codex completion still replaces partial text once without changing its stable row identity.
+    func testCodexFinalization() {
+        var state = LiveVoiceTranscript()
+        state.apply(["type": "input_transcript.added", "item": ["text": "Hello"]])
+        let id = state.captions.first?.id
+        XCTAssertTrue(state.messages.isEmpty)
         let done: [String: Any] = ["type": "turn.done", "turn": ["id": "server-user", "role": "user", "transcript": "Hello there."]]
-        session.handle(done)
-        session.handle(done)
-        session.handle(["type": "input_transcript.added", "item": ["text": "Next question"]])
-        XCTAssertEqual(session.captions.count, 2)
-        XCTAssertEqual(session.captions.first?.id, id)
-        XCTAssertEqual(session.captions.first?.text, "Hello there.")
-        XCTAssertEqual(session.captions.last?.isComplete, false)
-        XCTAssertEqual(session.messages.map(\.text), ["Hello there."])
+        state.apply(done); state.apply(done)
+        state.apply(["type": "input_transcript.added", "item": ["text": "Next question"]])
+        XCTAssertEqual(state.captions.count, 2)
+        XCTAssertEqual(state.captions.first?.id, id)
+        XCTAssertEqual(state.captions.first?.isComplete, true)
+        XCTAssertEqual(state.messages.map(\.text), ["Hello there."])
     }
 
-    /// Caption completion is presentation-only; storage takes the complete canonical response content instead.
-    @MainActor func testCanonicalResponseIsIndependentFromCaptions() {
-        let session = RealtimeVoiceSession()
-        session.handle(["type": "response.output_audio_transcript.done", "item_id": "a", "transcript": "Brief spoken caption"])
-        XCTAssertTrue(session.messages.isEmpty)
-        let output: [[String: Any]] = [["id": "a", "type": "message", "role": "assistant",
-                                      "content": [["type": "output_text", "text": "Complete canonical answer"]]]]
-        session.handle(["type": "response.done", "response": ["status": "cancelled", "output": output]])
-        XCTAssertTrue(session.messages.isEmpty)
-        session.handle(["type": "response.done", "response": ["status": "completed", "output": output]])
-        session.handle(["type": "response.done", "response": ["status": "completed", "output": output]])
-        XCTAssertEqual(session.messages.map(\.text), ["Complete canonical answer"])
-        XCTAssertEqual(session.captions.first?.text, "Brief spoken caption")
-    }
-
-    /// Audio-mode messages use the final response's transcript while delayed user messages retain speech order.
-    @MainActor func testFinalAudioMessagesAreOrderedBeforeLateUserTranscription() {
-        let session = RealtimeVoiceSession()
-        session.handle(["type": "input_audio_buffer.speech_started", "item_id": "user"])
-        session.handle(["type": "response.output_audio_transcript.delta", "item_id": "assistant", "delta": "Partial"])
-        session.handle(["type": "response.done", "response": ["status": "completed", "output": [
-            ["id": "assistant", "type": "message", "role": "assistant", "content": [["type": "output_audio", "transcript": "Final answer"]]]]]])
-        session.handle(["type": "conversation.item.input_audio_transcription.completed", "item_id": "user", "transcript": "Final question"])
-        XCTAssertEqual(session.messages.map(\.role), [.user, .assistant])
-        XCTAssertEqual(session.messages.map(\.text), ["Final question", "Final answer"])
-    }
-
-    /// Ending or losing the connection never erases text already received for an unfinished utterance.
-    @MainActor func testPartialTextRemainsAvailableAfterStop() {
-        let session = RealtimeVoiceSession()
-        session.handle(["type": "output_transcript.added", "item": ["text": "Still speaking"]])
-        session.stop()
-        XCTAssertEqual(session.captions.first?.text, "Still speaking")
-        XCTAssertEqual(session.captions.first?.isComplete, false)
-        XCTAssertTrue(session.messages.isEmpty)
+    /// Constructs representative public events with independent audio timestamps and service IDs.
+    private func delta(_ id: String, _ role: String, _ text: String, _ start: Int, _ end: Int) -> [String: Any] {
+        ["type": role == "user" ? "session.input_transcript.delta" : "session.output_transcript.delta",
+         "event_id": id, "delta": text, "start_ms": start, "end_ms": end]
     }
 }
 #endif

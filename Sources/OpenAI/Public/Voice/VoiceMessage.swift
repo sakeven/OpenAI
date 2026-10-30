@@ -1,6 +1,6 @@
 import Foundation
 
-/// A complete conversation message, supplied as history or confirmed by the voice service.
+/// A conversation message supplied as history, a final turn, or an accumulated Live transcript snapshot.
 public struct VoiceMessage: Identifiable, Equatable, Sendable {
     /// Stable service-message identity, namespaced by the owning application when persisted.
     public let id: String
@@ -19,7 +19,7 @@ public struct VoiceMessage: Identifiable, Equatable, Sendable {
     public init(id: String = UUID().uuidString, role: Role, text: String) {
         self.id = id; self.role = role; self.text = text
     }
-    /// Native wire representation shared by Codex history and public Realtime message events.
+    /// Native history representation shared by public Live and Codex session creation.
     var wireValue: [String: Any] {
         ["type": "message", "role": role.rawValue,
          "content": [["type": role == .user ? "input_text" : "output_text", "text": text]]]
