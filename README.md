@@ -706,20 +706,22 @@ for try await result in openAI.audioCreateSpeechStream(query: query) {
 
 ### Audio Transcriptions
 
-Transcribes audio into the input language.
+Transcribes audio into the input language. For `gpt-transcribe`, supply literal domain terms through `keywords` and expected input language codes through `languages`; the multipart encoder sends repeated `keywords[]` and `languages[]` fields. Use `prompt` for recording context, not as a replacement for the keyword array. Do not send `language` together with `languages`. Each keyword must be a single line without `<`, `>`, CR or LF; the service validates these constraints. The SDK preserves supplied values without filtering or truncation. Existing models can continue using `language`; omitted or empty arrays add no form fields. No new endpoint or dependency is required.
 
 **Request**
 
 ```swift
-public struct AudioTranscriptionQuery: Codable, Equatable {
+public struct AudioTranscriptionQuery: Codable, Streamable, Sendable {
     
     public let file: Data
-    public let fileName: String
+    public let fileType: FileType
     public let model: Model
     
     public let prompt: String?
     public let temperature: Double?
-    public let language: String?
+    public let language: String? // Legacy models only
+    public let languages: [String]? // gpt-transcribe
+    public let keywords: [String]? // gpt-transcribe
 }
 ```
 
@@ -736,7 +738,11 @@ public struct AudioTranscriptionResult: Codable, Equatable {
 
 ```swift
 let data = Data(contentsOfURL:...)
-let query = AudioTranscriptionQuery(file: data, fileName: "audio.m4a", model: .whisper_1)        
+let query = AudioTranscriptionQuery(
+    file: data, fileType: .m4a, model: "gpt-transcribe",
+    prompt: "A product planning meeting.",
+    languages: ["en", "zh"], keywords: ["AnyNotes", "AC-42", "New York"]
+)
 
 openAI.audioTranscriptions(query: query) { result in
     //Handle result here

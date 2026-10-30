@@ -33,7 +33,7 @@ public struct AudioTranscriptionQuery: Codable, Streamable, Sendable {
     /// The audio file object (not file name) to transcribe, in one of these formats: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, or webm.
     public let file: Data
     public let fileType: Self.FileType
-    /// ID of the model to use. whisper-1, gpt-4o-transcribe and gpt-4o-mini-transcribe are currently available.
+    /// Transcription model, including gpt-transcribe and the legacy Whisper / GPT-4o transcription models.
     public let model: Model
     /// The format of the transcript output, in one of these options: json, text, srt, verbose_json, or vtt.
     /// Defaults to json
@@ -46,6 +46,10 @@ public struct AudioTranscriptionQuery: Codable, Streamable, Sendable {
     /// The language of the input audio. Supplying the input language in ISO-639-1 format will improve accuracy and latency.
     /// https://platform.openai.com/docs/guides/speech-to-text/prompting
     public let language: String?
+    /// Expected input languages for gpt-transcribe. Do not send together with language.
+    public let languages: [String]?
+    /// Literal vocabulary hints for gpt-transcribe; each term must not contain <, >, CR or LF.
+    public let keywords: [String]?
     public var stream: Bool
     /// The timestamp granularities to populate for this transcription. response_format must be set verbose_json to use timestamp granularities. Either or both of these options are supported: word, or segment. Note: There is no additional latency for segment timestamps, but generating word timestamps incurs additional latency.
     /// Defaults to segment
@@ -53,13 +57,16 @@ public struct AudioTranscriptionQuery: Codable, Streamable, Sendable {
     /// Additional information to include in the transcription response. logprobs will return the log probabilities of the tokens in the response to understand the model's confidence in the transcription. logprobs only works with response_format set to json and only with the models gpt-4o-transcribe and gpt-4o-mini-transcribe.
     public let include: [Self.Include]
 
-    public init(file: Data, fileType: Self.FileType, model: Model, prompt: String? = nil, temperature: Double? = nil, language: String? = nil, responseFormat: Self.ResponseFormat? = nil, stream: Bool = false, timestampGranularities: [Self.TimestampGranularities] = [], include: [Self.Include] = []) {
+    /// Creates a transcription request; use languages and keywords for gpt-transcribe context.
+    public init(file: Data, fileType: Self.FileType, model: Model, prompt: String? = nil, temperature: Double? = nil, language: String? = nil, responseFormat: Self.ResponseFormat? = nil, stream: Bool = false, timestampGranularities: [Self.TimestampGranularities] = [], include: [Self.Include] = [], languages: [String]? = nil, keywords: [String]? = nil) {
         self.file = file
         self.fileType = fileType
         self.model = model
         self.prompt = prompt
         self.temperature = temperature
         self.language = language
+        self.languages = languages
+        self.keywords = keywords
         self.responseFormat = responseFormat
         self.stream = stream
         self.timestampGranularities = timestampGranularities
@@ -103,6 +110,7 @@ public struct AudioTranscriptionQuery: Codable, Streamable, Sendable {
 
 extension AudioTranscriptionQuery: MultipartFormDataBodyEncodable {
     
+    /// Encodes array hints as repeated multipart fields, preserving every literal term.
     func encode(boundary: String) -> Data {
         let bodyBuilder = MultipartFormDataBodyBuilder(
             boundary: boundary, 
@@ -117,6 +125,8 @@ extension AudioTranscriptionQuery: MultipartFormDataBodyEncodable {
             ]
             + timestampGranularities.map({.string(paramName: "timestamp_granularities[]", value: $0)})
             + include.map({.string(paramName: "include[]", value: $0)})
+            + (languages ?? []).map({.string(paramName: "languages[]", value: $0)})
+            + (keywords ?? []).map({.string(paramName: "keywords[]", value: $0)})
         )
         
         return bodyBuilder.build()
