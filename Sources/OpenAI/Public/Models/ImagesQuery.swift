@@ -40,6 +40,16 @@ public struct ImagesQuery: Codable, Equatable, Sendable {
     /// Defaults to standard
     public let quality: Self.Quality?
 
+    /// Encoded image format. GPT Image 2.6 additionally supports static SVG and animated GIF.
+    public let outputFormat: OutputFormat?
+    /// Optional SVG author selection. Omit unless the account supports SVG model selection.
+    public let svg: SVGOptions?
+    /// Number of GIF frames, from 2 through 16. Omit for other formats.
+    public let frameCount: Int?
+    /// GIF frame duration in milliseconds, at least 20. The service rounds to 10 ms and caps the encoded delay at 655350 ms. Omit for other formats.
+    public let frameDurationMs: Int?
+
+    /// Creates a generation request; SVG and GIF use non-streaming output with no response_format override.
     public init(
         prompt: String,
         model: Model? = nil,
@@ -48,7 +58,11 @@ public struct ImagesQuery: Codable, Equatable, Sendable {
         responseFormat: Self.ResponseFormat? = nil,
         size: Size? = nil,
         style: Self.Style? = nil,
-        user: String? = nil
+        user: String? = nil,
+        outputFormat: OutputFormat? = nil,
+        frameCount: Int? = nil,
+        frameDurationMs: Int? = nil,
+        svg: SVGOptions? = nil
     ) {
         self.prompt = prompt
         self.n = n
@@ -58,8 +72,13 @@ public struct ImagesQuery: Codable, Equatable, Sendable {
         self.style = style
         self.user = user
         self.quality = quality
+        self.outputFormat = outputFormat
+        self.frameCount = frameCount
+        self.frameDurationMs = frameDurationMs
+        self.svg = svg
     }
 
+    /// Maps generation parameters to their API field names.
     public enum CodingKeys: String, CodingKey {
         case model
         case prompt
@@ -69,6 +88,35 @@ public struct ImagesQuery: Codable, Equatable, Sendable {
         case style
         case responseFormat = "response_format"
         case quality
+        case outputFormat = "output_format"
+        case svg
+        case frameCount = "frame_count"
+        case frameDurationMs = "frame_duration_ms"
+    }
+
+    /// Selects the SVG author independently of the image model that creates its reference image.
+    public struct SVGOptions: Codable, Equatable, Sendable {
+        /// SVG author model required when the account has SVG model selection enabled.
+        public let model: Model
+
+        /// Creates explicit SVG author selection while leaving its reasoning at the service default.
+        public init(model: Model) {
+            self.model = model
+        }
+    }
+
+    /// File formats returned as base64 bytes by GPT Image models.
+    public enum OutputFormat: String, Codable, CaseIterable, Hashable, Sendable {
+        /// Portable Network Graphics, also the default for image edits.
+        case png
+        /// JPEG raster image.
+        case jpeg
+        /// WebP raster image.
+        case webp
+        /// Animated GIF; generation only on GPT Image 2.6.
+        case gif
+        /// Static vector SVG; generation only on GPT Image 2.6.
+        case svg
     }
 
     public enum Style: String, Codable, CaseIterable, Hashable, Sendable {

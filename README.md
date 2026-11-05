@@ -85,6 +85,12 @@ dependencies: [
 ]
 ```
 
+### GPT Image 2.6 in the Images API
+
+Use `ImagesQuery(model: "gpt-image-2.6-sunburst", ...)` or `gpt-image-2.6-flare` with `outputFormat: .png`, `.jpeg`, `.webp`, `.gif`, or `.svg`. Optional `frameCount` (2–16) and `frameDurationMs` (at least 20 ms) apply only to GIF. The service rounds delays to 10 ms and caps the encoded delay at 655350 ms; GIF generation requires model preview access. GIF and SVG are generation-only, without streaming or partial images; SVG requires `n: 1`. Leave `responseFormat` unset and decode `b64Json` into original bytes with the matching extension. Raster editing remains available through `ImageEditsQuery` with PNG output. These additions affect generation request encoding only, with no new dependencies or permissions. Account and host support still apply; live GPT Image 2.6 generation has not been verified.
+
+For accounts with SVG model selection enabled, pass `svg: .init(model: "YOUR_SVG_AUTHOR_MODEL")` with `outputFormat: .svg`. This encodes `svg.model`, which selects the SVG author independently of the top-level image model. Omit `svg` when model selection is not enabled. Author reasoning uses the service default; supported author models and access must be verified with the account. See the [Images API reference](https://developers.openai.com/api/reference/resources/images/methods/generate).
+
 ### GPT Image 2.5 in Responses
 
 `Tool.imageGenerationTool` supports `.gptImage2_5Sunburst` (`gpt-image-2.5-sunburst`) and `.gptImage2_5Flare` (`gpt-image-2.5-flare`) in `Components.Schemas.ImageGenTool.ModelPayload`. These identifiers encode in the image tool's `model` field and decode from Responses tool definitions. Existing GPT Image 2 and Codex model identifiers remain available. The image tool schema lives in `Sources/OpenAI/Public/Schemas/Edited/ImageGenTool.swift`; no endpoint, dependency, or permission changes are required. Account/backend availability still applies; API support does not establish Codex OAuth availability.
@@ -1621,6 +1627,10 @@ We'll appreciate you including tests to your code if it is needed and possible. 
 - [OpenAI Examples](https://platform.openai.com/examples)
 - [Dall-E](https://labs.openai.com/)
 - [Cosine Similarity](https://en.wikipedia.org/wiki/Cosine_similarity)
+
+## Responses event diagnostics
+
+`OpenAIMiddleware.didReceiveResponseEvent(eventType:data:)` observes complete SSE payloads before typed decoding, preserving provider-specific error fields for callers that need them. It does not alter normal event delivery or the existing unknown-event callback. Consumers should filter out image/audio binary payloads before persisting diagnostics.
 
 ## License
 

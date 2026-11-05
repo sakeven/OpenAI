@@ -73,7 +73,7 @@ struct ImplicitURLSessionStreamingSessionFactory: StreamingSessionFactory {
         )
     }
     
-    /// Connects skipped-event diagnostics to the same middleware instances used by this request.
+    /// Connects raw and skipped-event observations to the middleware instances used by this request.
     func makeModelResponseStreamingSession(
         urlRequest: URLRequest,
         onReceiveContent: @Sendable @escaping (StreamingSession<ModelResponseEventsStreamInterpreter>, ResponseStreamEvent) -> Void,
@@ -82,7 +82,11 @@ struct ImplicitURLSessionStreamingSessionFactory: StreamingSessionFactory {
     ) -> StreamingSession<ModelResponseEventsStreamInterpreter> {
         .init(
             urlRequest: urlRequest,
-            interpreter: .init(onUnknownEvent: { [middlewares] eventType, data in
+            interpreter: .init(onEvent: { [middlewares] eventType, data in
+                for middleware in middlewares {
+                    middleware.didReceiveResponseEvent(eventType: eventType, data: data)
+                }
+            }, onUnknownEvent: { [middlewares] eventType, data in
                 for middleware in middlewares {
                     middleware.didSkipResponseEvent(eventType: eventType, data: data)
                 }

@@ -13,11 +13,15 @@ final class ModelResponseEventsStreamInterpreter: @unchecked Sendable, StreamInt
     private var onEventDispatched: ((ResponseStreamEvent) -> Void)?
     private var onError: ((Error) -> Void)?
     private let decoder = JSONDecoder()
+    /// Observes complete payloads before unknown fields are discarded by schema decoding.
+    private let onEvent: (@Sendable (String, Data) -> Void)?
     /// Receives full, reassembled payloads for event types outside the supported schema.
     private let onUnknownEvent: (@Sendable (String, Data) -> Void)?
     
-    /// Installs the optional diagnostics observer without changing stream result or error delivery.
-    init(onUnknownEvent: (@Sendable (String, Data) -> Void)? = nil) {
+    /// Installs raw and skipped-event observers without changing stream result or error delivery.
+    init(onEvent: (@Sendable (String, Data) -> Void)? = nil,
+         onUnknownEvent: (@Sendable (String, Data) -> Void)? = nil) {
+        self.onEvent = onEvent
         self.onUnknownEvent = onUnknownEvent
         parser.setCallbackClosures { [weak self] event in
             guard let self else {
@@ -64,6 +68,8 @@ final class ModelResponseEventsStreamInterpreter: @unchecked Sendable, StreamInt
         if eventType == "message" || eventType.isEmpty {
             eventType = try finalEvent.getPayloadType()
         }
+
+        onEvent?(eventType, finalEvent.data)
 
         // Providers can add event types independently of the SDK. Unknown types do not
         // terminate the stream; decoding failures for supported events still propagate.
